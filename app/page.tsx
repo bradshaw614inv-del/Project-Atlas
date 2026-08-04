@@ -6,6 +6,17 @@ const CATEGORIES = ["Defense contract", "FDA decision", "Earnings", "Merger or a
 const STORAGE_KEY = "atlas-forward-events-v1";
 const CAPITAL_KEY = "atlas-forward-capital-v1";
 
+const CONSERVATIVE_SETTINGS = {
+  riskPerTradePct: 0.25,
+  dailyLossLimitPct: 1,
+  maxOpenPositions: 3,
+  cashReservePct: 70,
+  confirmationMinutes: 5,
+  cooldownMinutes: 30,
+  openingDelayMinutes: 30,
+  closingBufferMinutes: 15,
+} as const;
+
 type PriceUpdate = { price: number; at: string };
 type EventRecord = {
   id: string;
@@ -38,7 +49,10 @@ export default function Home() {
   const [showForm, setShowForm] = useState(false);
   const [draftPrices, setDraftPrices] = useState<Record<string, string>>({});
   const [startingAccount, setStartingAccount] = useState(1000);
-  const positionSize = startingAccount / 10;
+  const deployableCapital = startingAccount * (1 - CONSERVATIVE_SETTINGS.cashReservePct / 100);
+  const positionSize = deployableCapital / CONSERVATIVE_SETTINGS.maxOpenPositions;
+  const riskBudget = startingAccount * CONSERVATIVE_SETTINGS.riskPerTradePct / 100;
+  const dailyLossLimit = startingAccount * CONSERVATIVE_SETTINGS.dailyLossLimitPct / 100;
 
   useEffect(() => {
     try {
@@ -66,7 +80,7 @@ export default function Home() {
     });
     const profit = results.reduce((sum, result) => sum + result, 0);
     return { measured: measured.length, profit, winners: results.filter((result) => result > 0).length };
-  }, [events]);
+  }, [events, positionSize]);
 
   function addEvent(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -122,10 +136,28 @@ export default function Home() {
       </section>
 
       <section className="account-strip">
-        <div className="capital-control"><label htmlFor="account-amount">MODEL ACCOUNT AMOUNT</label><span className="money-input"><i>$</i><input id="account-amount" aria-label="Model account amount" inputMode="decimal" type="number" min="1" step="1" value={startingAccount} onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value) && value >= 0) setStartingAccount(value); }} /></span><small>Divided into ten {money(positionSize, 2)} position slots</small></div>
+        <div className="capital-control"><label htmlFor="account-amount">MODEL ACCOUNT AMOUNT</label><span className="money-input"><i>$</i><input id="account-amount" aria-label="Model account amount" inputMode="decimal" type="number" min="1" step="1" value={startingAccount} onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value) && value >= 0) setStartingAccount(value); }} /></span><small>Up to three {money(positionSize, 2)} positions · {money(startingAccount * .7)} held back</small></div>
         <div><span>EVENTS RECORDED</span><strong>{events.length}</strong><small>{stats.measured} with a price update</small></div>
         <div><span>CURRENT TRACKED PROFIT</span><strong className={stats.profit >= 0 ? "positive" : "negative"}>{stats.profit >= 0 ? "+" : ""}{money(stats.profit)}</strong><small>Across updated positions</small></div>
         <div><span>WINNING POSITIONS</span><strong>{stats.measured ? `${Math.round(stats.winners / stats.measured * 100)}%` : "—"}</strong><small>{stats.winners} of {stats.measured}</small></div>
+      </section>
+
+      <section className="safety-panel" aria-labelledby="safety-title">
+        <div className="safety-heading">
+          <div><span>AUTOMATIC DEFAULTS</span><h2 id="safety-title">Minimum-risk simulation preset</h2><p>Atlas starts every simulation with the same conservative rules. These settings reduce exposure; they cannot remove market risk.</p></div>
+          <strong>ACTIVE</strong>
+        </div>
+        <div className="safety-grid">
+          <SafetyRule value={`${CONSERVATIVE_SETTINGS.riskPerTradePct}%`} label="Risk per position" detail={`${money(riskBudget)} on this account. Position size must shrink when the planned stop is farther away.`} />
+          <SafetyRule value={`${CONSERVATIVE_SETTINGS.dailyLossLimitPct}%`} label="Daily circuit breaker" detail={`Stop the day's simulation at ${money(dailyLossLimit)} of modeled losses or after two consecutive losses.`} />
+          <SafetyRule value={`${CONSERVATIVE_SETTINGS.maxOpenPositions}`} label="Maximum open positions" detail="No more than three positions at once, with no duplicate exposure to the same sector event." />
+          <SafetyRule value={`${CONSERVATIVE_SETTINGS.cashReservePct}%`} label="Cash reserve" detail={`${money(startingAccount * .7)} stays undeployed so one market event cannot expose the full account.`} />
+          <SafetyRule value={`${CONSERVATIVE_SETTINGS.confirmationMinutes} min`} label="Confirmation delay" detail="Never buy the first headline spike. Require the story, price and volume to remain supportive." />
+          <SafetyRule value={`${CONSERVATIVE_SETTINGS.cooldownMinutes} min`} label="Stop-out cooldown" detail="Do not immediately re-enter the same stock after a loss. A genuinely new signal is also required." />
+          <SafetyRule value="9:30–10:00" label="Opening window blocked" detail="The first 30 minutes are observation-only because prices and spreads can move unusually fast." />
+          <SafetyRule value="Last 15 min" label="Closing window blocked" detail="No new simulated position shortly before the close, when volatility and forced flows can increase." />
+        </div>
+        <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>verified fresh source</span><span>market not “Sit out”</span><span>adequate liquidity</span><span>reasonable spread</span><span>no chasing</span><span>prewritten exit</span></div>
       </section>
 
       <section className="tracker">
@@ -178,4 +210,8 @@ export default function Home() {
 
 function Info({ text }: { text: string }) {
   return <details className="info"><summary aria-label="More information">?</summary><div>{text}</div></details>;
+}
+
+function SafetyRule({ value, label, detail }: { value: string; label: string; detail: string }) {
+  return <article className="safety-rule"><div><b>{value}</b><span>{label}</span></div><Info text={detail} /></article>;
 }
