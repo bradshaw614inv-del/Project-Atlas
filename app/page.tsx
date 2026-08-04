@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 
 const CATEGORIES = ["Defense contract", "FDA decision", "Earnings", "Merger or acquisition", "Commodity or geopolitical", "CEO change", "Other"];
 const STORAGE_KEY = "atlas-forward-events-v1";
+const CAPITAL_KEY = "atlas-forward-capital-v1";
 
 type PriceUpdate = { price: number; at: string };
 type EventRecord = {
@@ -36,13 +37,15 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [draftPrices, setDraftPrices] = useState<Record<string, string>>({});
-  const startingAccount = 1000;
-  const positionSize = 100;
+  const [startingAccount, setStartingAccount] = useState(1000);
+  const positionSize = startingAccount / 10;
 
   useEffect(() => {
     try {
       const saved = window.localStorage.getItem(STORAGE_KEY);
       if (saved) setEvents(JSON.parse(saved));
+      const savedCapital = Number(window.localStorage.getItem(CAPITAL_KEY));
+      if (Number.isFinite(savedCapital) && savedCapital > 0) setStartingAccount(savedCapital);
     } catch { /* Start empty if local storage is unavailable. */ }
     setReady(true);
   }, []);
@@ -50,6 +53,10 @@ export default function Home() {
   useEffect(() => {
     if (ready) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
   }, [events, ready]);
+
+  useEffect(() => {
+    if (ready) window.localStorage.setItem(CAPITAL_KEY, String(startingAccount));
+  }, [startingAccount, ready]);
 
   const stats = useMemo(() => {
     const measured = events.filter((event) => event.updates.length > 0);
@@ -115,7 +122,7 @@ export default function Home() {
       </section>
 
       <section className="account-strip">
-        <div><span>MODEL ACCOUNT</span><strong>{money(startingAccount, 0)}</strong><small>Ten {money(positionSize, 0)} position slots</small></div>
+        <div className="capital-control"><label htmlFor="account-amount">MODEL ACCOUNT AMOUNT</label><span className="money-input"><i>$</i><input id="account-amount" aria-label="Model account amount" inputMode="decimal" type="number" min="1" step="1" value={startingAccount} onChange={(e) => { const value = Number(e.target.value); if (Number.isFinite(value) && value >= 0) setStartingAccount(value); }} /></span><small>Divided into ten {money(positionSize, 2)} position slots</small></div>
         <div><span>EVENTS RECORDED</span><strong>{events.length}</strong><small>{stats.measured} with a price update</small></div>
         <div><span>CURRENT TRACKED PROFIT</span><strong className={stats.profit >= 0 ? "positive" : "negative"}>{stats.profit >= 0 ? "+" : ""}{money(stats.profit)}</strong><small>Across updated positions</small></div>
         <div><span>WINNING POSITIONS</span><strong>{stats.measured ? `${Math.round(stats.winners / stats.measured * 100)}%` : "—"}</strong><small>{stats.winners} of {stats.measured}</small></div>
