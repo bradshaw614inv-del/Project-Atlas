@@ -6,8 +6,8 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Project Atlas — Historical News Replay",
-  description: "An interactive proof of concept for replaying news-driven trading strategies against history.",
+  title: "Project Atlas — Forward News Tracker",
+  description: "Record real market-moving news and track what happens from today forward.",
   icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
   openGraph: {
     title: "Project Atlas — Replay the news. Measure the edge.",
