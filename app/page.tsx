@@ -7,6 +7,8 @@ const STORAGE_KEY = "atlas-forward-events-v1";
 const CAPITAL_KEY = "atlas-forward-capital-v1";
 
 const CONSERVATIVE_SETTINGS = {
+  broker: "Robinhood",
+  accountType: "Cash account",
   riskPerTradePct: 0.25,
   dailyLossLimitPct: 1,
   maxOpenPositions: 3,
@@ -144,20 +146,24 @@ export default function Home() {
 
       <section className="safety-panel" aria-labelledby="safety-title">
         <div className="safety-heading">
-          <div><span>AUTOMATIC DEFAULTS</span><h2 id="safety-title">Minimum-risk simulation preset</h2><p>Atlas starts every simulation with the same conservative rules. These settings reduce exposure; they cannot remove market risk.</p></div>
-          <strong>ACTIVE</strong>
+          <div><span>AUTOMATIC DEFAULTS · ROBINHOOD</span><h2 id="safety-title">Minimum-risk simulation preset</h2><p>Atlas models Robinhood’s actual equity-order behavior. These settings reduce exposure; they cannot remove market or execution risk.</p></div>
+          <strong>ROBINHOOD MODE</strong>
         </div>
         <div className="safety-grid">
+          <SafetyRule value="Cash only" label="Account model" detail="No margin, leverage or unsettled sale proceeds. Buying power is treated as unavailable until Robinhood shows it as settled cash." />
+          <SafetyRule value="Stocks + ETFs" label="Allowed products" detail="No options, crypto, futures, short selling, leveraged ETFs, penny stocks or OTC securities in this minimum-risk experiment." />
           <SafetyRule value={`${CONSERVATIVE_SETTINGS.riskPerTradePct}%`} label="Risk per position" detail={`${money(riskBudget)} on this account. Position size must shrink when the planned stop is farther away.`} />
           <SafetyRule value={`${CONSERVATIVE_SETTINGS.dailyLossLimitPct}%`} label="Daily circuit breaker" detail={`Stop the day's simulation at ${money(dailyLossLimit)} of modeled losses or after two consecutive losses.`} />
           <SafetyRule value={`${CONSERVATIVE_SETTINGS.maxOpenPositions}`} label="Maximum open positions" detail="No more than three positions at once, with no duplicate exposure to the same sector event." />
           <SafetyRule value={`${CONSERVATIVE_SETTINGS.cashReservePct}%`} label="Cash reserve" detail={`${money(startingAccount * .7)} stays undeployed so one market event cannot expose the full account.`} />
           <SafetyRule value={`${CONSERVATIVE_SETTINGS.confirmationMinutes} min`} label="Confirmation delay" detail="Never buy the first headline spike. Require the story, price and volume to remain supportive." />
           <SafetyRule value={`${CONSERVATIVE_SETTINGS.cooldownMinutes} min`} label="Stop-out cooldown" detail="Do not immediately re-enter the same stock after a loss. A genuinely new signal is also required." />
-          <SafetyRule value="9:30–10:00" label="Opening window blocked" detail="The first 30 minutes are observation-only because prices and spreads can move unusually fast." />
-          <SafetyRule value="Last 15 min" label="Closing window blocked" detail="No new simulated position shortly before the close, when volatility and forced flows can increase." />
+          <SafetyRule value="Limit order" label="Entry order" detail="Use a day limit order during regular market hours. If it does not fill promptly, cancel it; never raise the limit to chase the stock." />
+          <SafetyRule value="One exit" label="Protective order" detail="After Robinhood confirms the fill, place one protective GTC sell stop. Robinhood does not support bracket orders, so Atlas never assumes simultaneous target and stop orders." />
+          <SafetyRule value="10:00–3:45" label="Allowed entry window" detail="Regular market hours only, excluding the first 30 and final 15 minutes. No extended-hours or overnight orders." />
+          <SafetyRule value="Flat by 3:45" label="No overnight risk" detail="The experiment closes simulated positions before the final 15 minutes. Robinhood stop and trailing-stop orders do not execute after regular hours." />
         </div>
-        <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>verified fresh source</span><span>market not “Sit out”</span><span>adequate liquidity</span><span>reasonable spread</span><span>no chasing</span><span>prewritten exit</span></div>
+        <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>settled Robinhood buying power</span><span>fractional-share eligible</span><span>verified fresh source</span><span>market not “Sit out”</span><span>adequate liquidity</span><span>reasonable spread</span><span>no trading halt</span><span>no chasing</span><span>prewritten exit</span></div>
       </section>
 
       <section className="tracker">
