@@ -53,13 +53,14 @@ function buildTrades(strategy: Strategy, enabled: boolean[]): Trade[] {
     const clipped = Math.max(-strategy.trailingStop - strategy.costs, Math.min(strategy.profitTarget - strategy.costs, rawReturn));
     const entry = 28 + rng(i + 7) * 365;
     const date = new Date(Date.UTC(2026, 0, 2 + Math.floor(i / 7)));
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     const hitTarget = clipped >= strategy.profitTarget - strategy.costs - 0.01;
     const hitStop = clipped <= -strategy.trailingStop - strategy.costs + 0.01;
     trades.push({
       id: i + 1,
       category: CATEGORIES[catIndex],
       ticker: TICKERS[i % TICKERS.length],
-      date: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      date: `${months[date.getUTCMonth()]} ${date.getUTCDate()}`,
       entry,
       exit: entry * (1 + clipped / 100),
       returnPct: clipped,
