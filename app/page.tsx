@@ -75,9 +75,15 @@ function pct(n: number, signed = false) {
   return `${signed && n > 0 ? "+" : ""}${n.toFixed(2)}%`;
 }
 
+function money(n: number, signed = false) {
+  const sign = signed && n > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n)}`;
+}
+
 export default function Home() {
   const [strategy, setStrategy] = useState<Strategy>({ entryDelay: 15, trailingStop: 4, profitTarget: 8, holdHours: 24, costs: 0.18 });
   const [enabled, setEnabled] = useState(CATEGORIES.map(() => true));
+  const [capital, setCapital] = useState(1000);
   const [page, setPage] = useState(0);
   const [running, setRunning] = useState(false);
   const [lastRun, setLastRun] = useState("Baseline · Aug 3, 10:42 PM");
@@ -91,6 +97,9 @@ export default function Home() {
   const totalReturn = trades.length ? ((1 + avg / 100) ** Math.min(30, trades.length / 40) - 1) * 100 : 0;
   const benchmark = 8.7;
   const drawdown = Math.min(18, 5.8 + strategy.trailingStop * 0.76 + strategy.entryDelay / 30);
+  const endingBalance = capital * (1 + totalReturn / 100);
+  const dollarProfit = endingBalance - capital;
+  const positionSize = capital * 0.1;
 
   const categoryStats = CATEGORIES.map((category, i) => {
     const subset = trades.filter((t) => t.category === category);
@@ -136,9 +145,19 @@ export default function Home() {
         <div className="guide-icon">3</div><div><strong>Read the results</strong><span>Green is generally better; red shows losses or risk.</span></div>
       </section>
 
+      <section className="money-plan">
+        <div><span>YOUR STARTING MONEY</span><strong>{money(capital)}</strong></div>
+        <p>Atlas divides it into <b>10 equal parts</b>. Each example trade uses up to <b>{money(positionSize)}</b>, so one bad trade cannot use the whole account.</p>
+        <Info text={`With ${money(capital)}, Atlas allows up to 10 positions of about ${money(positionSize)} each. This prototype applies the strategy's simulated percentage result to the account; it does not place real Robinhood orders.`} />
+      </section>
+
       <section className="workspace">
         <aside className="controls">
           <div className="section-title"><span>01</span><div><strong>CHOOSE YOUR RULES</strong><small>How should each example trade work?</small></div></div>
+
+          <Control label="MONEY TO START WITH" value={money(capital)} help="This is the starting account value for the historical test. Atlas does not move real money. It only shows what the simulated percentage results mean in dollars.">
+            <div className="segmented four">{[500, 1000, 2500, 5000].map((v) => <button className={capital === v ? "active" : ""} onClick={() => setCapital(v)} key={v}>${v >= 1000 ? `${v / 1000}K` : v}</button>)}</div>
+          </Control>
 
           <Control label="WHEN TO BUY" value={`${strategy.entryDelay} min`} help="How long Atlas waits after a news story appears before buying. ‘Now’ means immediately; 15 means waiting 15 minutes to see how the market reacts.">
             <div className="segmented">{[0, 5, 15, 30, 60].map((v) => <button className={strategy.entryDelay === v ? "active" : ""} onClick={() => update("entryDelay", v)} key={v}>{v === 0 ? "NOW" : v}</button>)}</div>
@@ -167,10 +186,10 @@ export default function Home() {
           <div className="section-title"><span>03</span><div><strong>WHAT HAPPENED?</strong><small>{trades.length.toLocaleString()} example trades replayed · estimated costs included</small></div><div className="confidence">● AMOUNT OF EVIDENCE <b>{trades.length >= 1000 ? "STRONG" : "LIMITED"}</b><Info text="More examples generally make a result less likely to be random. This does not guarantee the strategy will work in the future." /></div></div>
 
           <div className="metrics">
-            <Metric label="TOTAL SIMULATED GROWTH" value={pct(totalReturn, true)} sub={`S&P 500 comparison: ${pct(benchmark, true)}`} help="The estimated total change in the strategy over the test period. The S&P 500 is shown as a simple market comparison." good={totalReturn > benchmark} />
+            <Metric label="ESTIMATED ENDING BALANCE" value={money(endingBalance)} sub={`${money(dollarProfit, true)} · ${pct(totalReturn, true)}`} help={`Starting with ${money(capital)}, this is the estimated account value at the end of the six-month replay. It assumes the strategy spreads money across positions and reinvests results.`} good={dollarProfit > 0} />
             <Metric label="TRADES THAT MADE MONEY" value={pct(winRate)} sub={`${wins.length} winning trades`} help="The percentage of completed trades that ended above their purchase price after estimated trading costs." />
-            <Metric label="TYPICAL TRADE RESULT" value={pct(avg, true)} sub={`Middle result: ${pct(median, true)}`} help="The average gain or loss for one trade. The middle result—also called the median—is less affected by a few unusually large wins or losses." good={avg > 0} />
-            <Metric label="BIGGEST DROP ALONG THE WAY" value={pct(-drawdown)} sub="Largest fall from a previous high" help="Also called maximum drawdown. It shows the worst decline before the strategy recovered or the test ended—a useful picture of how painful the ride could feel." danger />
+            <Metric label="TYPICAL $100 TRADE" value={money(positionSize * avg / 100, true)} sub={`${pct(avg, true)} average result`} help={`Each trade uses about one-tenth of the starting money—${money(positionSize)} here. This shows the average dollar gain or loss for one such trade.`} good={avg > 0} />
+            <Metric label="BIGGEST ACCOUNT DROP" value={money(-capital * drawdown / 100)} sub={`${pct(-drawdown)} from a previous high`} help="Also called maximum drawdown. It shows the worst estimated dollar decline before the strategy recovered or the test ended." danger />
           </div>
 
           <div className="charts">
@@ -194,7 +213,7 @@ export default function Home() {
 
           <section className="panel ledger">
             <div className="panel-head"><div><span>EVERY EXAMPLE TRADE</span><small>A detailed list of what Atlas bought and sold</small></div><button onClick={() => navigator.clipboard?.writeText(trades.map(t => `${t.date},${t.ticker},${t.category},${t.returnPct.toFixed(2)}%`).join("\n"))}>COPY LIST</button></div>
-            <div className="table-wrap"><table><thead><tr><th>DATE</th><th>EVENT / TICKER</th><th>ENTRY</th><th>EXIT</th><th>HOLD</th><th>EXIT REASON</th><th>RETURN</th><th>RESULT</th></tr></thead><tbody>{visible.map((t) => <tr key={t.id}><td>{t.date}</td><td><strong>{t.ticker}</strong><small>{t.category}</small></td><td>${t.entry.toFixed(2)}</td><td>${t.exit.toFixed(2)}</td><td>{t.hold}h</td><td>{t.exitReason}</td><td className={t.returnPct > 0 ? "positive" : "negative"}>{pct(t.returnPct, true)}</td><td><span className={`result-pill ${t.returnPct > 0 ? "win" : "loss"}`}>{t.returnPct > 0 ? "WIN" : "LOSS"}</span></td></tr>)}</tbody></table></div>
+            <div className="table-wrap"><table><thead><tr><th>DATE</th><th>EVENT / TICKER</th><th>AMOUNT USED</th><th>BUY PRICE</th><th>SELL PRICE</th><th>TIME HELD</th><th>WHY IT SOLD</th><th>GAIN / LOSS</th><th>RESULT</th></tr></thead><tbody>{visible.map((t) => <tr key={t.id}><td>{t.date}</td><td><strong>{t.ticker}</strong><small>{t.category}</small></td><td>{money(positionSize)}<small>{(positionSize / t.entry).toFixed(2)} shares</small></td><td>${t.entry.toFixed(2)}</td><td>${t.exit.toFixed(2)}</td><td>{t.hold}h</td><td>{t.exitReason}</td><td className={t.returnPct > 0 ? "positive" : "negative"}>{money(positionSize * t.returnPct / 100, true)}<small>{pct(t.returnPct, true)}</small></td><td><span className={`result-pill ${t.returnPct > 0 ? "win" : "loss"}`}>{t.returnPct > 0 ? "WIN" : "LOSS"}</span></td></tr>)}</tbody></table></div>
             <div className="pager"><span>Showing {page * 8 + 1}–{Math.min(page * 8 + 8, trades.length)} of {trades.length.toLocaleString()}</span><div><button disabled={page === 0} onClick={() => setPage(Math.max(0, page - 1))}>←</button><button disabled={(page + 1) * 8 >= trades.length} onClick={() => setPage(page + 1)}>→</button></div></div>
           </section>
         </div>
