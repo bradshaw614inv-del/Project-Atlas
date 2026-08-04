@@ -86,6 +86,7 @@ export default function Home() {
   const [capital, setCapital] = useState(1000);
   const [page, setPage] = useState(0);
   const [running, setRunning] = useState(false);
+  const [hasRun, setHasRun] = useState(false);
   const [lastRun, setLastRun] = useState("Baseline · Aug 3, 10:42 PM");
 
   const trades = useMemo(() => buildTrades(strategy, enabled), [strategy, enabled, lastRun]);
@@ -109,12 +110,14 @@ export default function Home() {
   function update<K extends keyof Strategy>(key: K, value: Strategy[K]) {
     setStrategy((s) => ({ ...s, [key]: value }));
     setPage(0);
+    setHasRun(false);
   }
 
   function runSimulation() {
     setRunning(true);
     window.setTimeout(() => {
       setLastRun(`Custom run · ${new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`);
+      setHasRun(true);
       setRunning(false);
     }, 650);
   }
@@ -156,7 +159,7 @@ export default function Home() {
           <div className="section-title"><span>01</span><div><strong>CHOOSE YOUR RULES</strong><small>How should each example trade work?</small></div></div>
 
           <Control label="MONEY TO START WITH" value={money(capital)} help="This is the starting account value for the historical test. Atlas does not move real money. It only shows what the simulated percentage results mean in dollars.">
-            <div className="segmented four">{[500, 1000, 2500, 5000].map((v) => <button className={capital === v ? "active" : ""} onClick={() => setCapital(v)} key={v}>${v >= 1000 ? `${v / 1000}K` : v}</button>)}</div>
+            <div className="segmented four">{[500, 1000, 2500, 5000].map((v) => <button className={capital === v ? "active" : ""} onClick={() => { setCapital(v); setHasRun(false); }} key={v}>${v >= 1000 ? `${v / 1000}K` : v}</button>)}</div>
           </Control>
 
           <Control label="WHEN TO BUY" value={`${strategy.entryDelay} min`} help="How long Atlas waits after a news story appears before buying. ‘Now’ means immediately; 15 means waiting 15 minutes to see how the market reacts.">
@@ -179,11 +182,18 @@ export default function Home() {
           </Control>
 
           <div className="section-title event-title"><span>02</span><div><strong>CHOOSE NEWS TYPES</strong><small>What kind of news should trigger a trade?</small></div></div>
-          <div className="event-list">{CATEGORIES.map((cat, i) => <label key={cat}><input type="checkbox" checked={enabled[i]} onChange={() => setEnabled((e) => e.map((v, j) => i === j ? !v : v))} /><span className="check">✓</span><i style={{ background: COLORS[i] }} />{cat}</label>)}</div>
+          <div className="event-list">{CATEGORIES.map((cat, i) => <label key={cat}><input type="checkbox" checked={enabled[i]} onChange={() => { setEnabled((e) => e.map((v, j) => i === j ? !v : v)); setHasRun(false); }} /><span className="check">✓</span><i style={{ background: COLORS[i] }} />{cat}</label>)}</div>
         </aside>
 
         <div className="results">
           <div className="section-title"><span>03</span><div><strong>WHAT HAPPENED?</strong><small>{trades.length.toLocaleString()} example trades replayed · estimated costs included</small></div><div className="confidence">● AMOUNT OF EVIDENCE <b>{trades.length >= 1000 ? "STRONG" : "LIMITED"}</b><Info text="More examples generally make a result less likely to be random. This does not guarantee the strategy will work in the future." /></div></div>
+
+          {hasRun && <section className={`profit-result ${dollarProfit >= 0 ? "profit" : "loss-result"}`} aria-live="polite">
+            <div><span>SIMULATION COMPLETE</span><strong>{dollarProfit >= 0 ? "ESTIMATED PROFIT" : "ESTIMATED LOSS"}</strong></div>
+            <b>{money(dollarProfit, true)}</b>
+            <p>Your {money(capital)} became an estimated <strong>{money(endingBalance)}</strong> over the six-month replay. {totalReturn > benchmark ? `That beat the S&P 500 comparison by ${pct(totalReturn - benchmark)}.` : `That trailed the S&P 500 comparison by ${pct(benchmark - totalReturn)}.`}</p>
+            <Info text="This is a simulated historical result using prototype data and the rules you selected. It is not a prediction or guaranteed future profit, and no Robinhood trade was placed." />
+          </section>}
 
           <div className="metrics">
             <Metric label="ESTIMATED ENDING BALANCE" value={money(endingBalance)} sub={`${money(dollarProfit, true)} · ${pct(totalReturn, true)}`} help={`Starting with ${money(capital)}, this is the estimated account value at the end of the six-month replay. It assumes the strategy spreads money across positions and reinvests results.`} good={dollarProfit > 0} />
