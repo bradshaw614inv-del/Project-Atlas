@@ -168,10 +168,10 @@ export default function Home() {
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
-      <section className="truth-banner"><strong>REAL DATA ONLY</strong><span>Atlas records verified Finnhub news and quotes. Missing spread, volume, breadth, VWAP, volatility, or fill data stays unavailable—never estimated, invented, or replaced with synthetic values.</span></section>
+      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, companies, news, timestamps, and market quotes must be real and source-traceable. Only the paper execution and its calculated return or loss are simulated. Missing market inputs stay unavailable—never estimated, invented, or replaced.</span></section>
 
       <section className="hero forward-hero">
-        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real company news and quotes, records every trade and non-trade observation, and runs transparent paper trades. No synthetic history, invented fills, or assumed market data.</p></div>
+        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stocks, real companies, real news, and real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "RUN A SCAN NOW"}</button>
       </section>
 

@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   return Response.json({
     threshold: 60,
     phase: "INFORMATION_COLLECTION",
-    provenance: { news: "Finnhub company-news endpoint", quotes: "Finnhub quote endpoint", fills: "Paper calculations from observed scan quotes", unavailableInputsAreSynthetic: false },
+    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", news: "Finnhub company-news endpoint", quotes: "Finnhub quote endpoint", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false },
     bands,
     nearMisses: candidateRows.filter((row) => row.nearMiss).slice(0, 50),
     confidenceTimeline: candidateRows.slice(0, 120).reverse().map((row) => ({ id: row.id, ticker: row.ticker, scanAt: row.scanAt, score: row.score, band: row.scoreBand, signals: JSON.parse(row.signalBreakdown || "[]") })),
