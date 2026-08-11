@@ -8,6 +8,7 @@ import {
 
 const STATE_POLL_MS = 15000;
 const CANDIDATES_POLL_MS = 30000;
+const MIN_VALIDATED_SAMPLE = 30;
 
 type Account = {
   startingCapital: number; maxOpenPositions: number; riskPerTradePct: number;
@@ -164,11 +165,13 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brandmark">A</span><div><strong>ATLAS</strong><small>AUTOMATED NEWS-DRIVEN SIMULATOR</small></div></div>
-        <div className="mode"><span className="pulse" /> SCANNING EVERY 5 MINUTES</div>
+        <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
+      <section className="truth-banner"><strong>REAL DATA ONLY</strong><span>Atlas records verified Finnhub news and quotes. Missing spread, volume, breadth, VWAP, volatility, or fill data stays unavailable—never estimated, invented, or replaced with synthetic values.</span></section>
+
       <section className="hero forward-hero">
-        <div><p className="eyebrow">FULLY AUTOMATED · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas decides.</em></h1><p className="lede">Every 5 minutes Atlas scans real company news, scores it, and opens or closes simulated positions on its own. Nothing here is a real order — it never touches Robinhood or any brokerage.</p></div>
+        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real company news and quotes, records every trade and non-trade observation, and runs transparent paper trades. No synthetic history, invented fills, or assumed market data.</p></div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "RUN A SCAN NOW"}</button>
       </section>
 
@@ -202,7 +205,7 @@ export default function Home() {
         <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Starting cash + realized and open-position P&amp;L</small></div>
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
         <div><span>TODAY'S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
-        <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.winRate !== null ? `${closedStats.winRate}% win rate over ${closedStats.count} closed` : "No closed trades yet"}</small></div>
+        <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
       </section>
 
       <section className="tracker">
@@ -255,14 +258,14 @@ export default function Home() {
       </section>
 
       <section className="intelligence-panel">
-        <div className="tracker-head"><div><span>ATLAS INTELLIGENCE</span><h2>Calibration &amp; learning</h2><p>Learning is observational until it has at least {insights?.validationPolicy.minSampleSize ?? 30} samples and passes a backtest. The live threshold remains 60.</p></div></div>
+        <div className="tracker-head"><div><span>ATLAS INTELLIGENCE</span><h2>Evidence collection &amp; calibration</h2><p>No performance claim is validated until it has at least {insights?.validationPolicy.minSampleSize ?? 30} real closed observations and passes an out-of-sample test. The live threshold remains 60.</p></div></div>
         <div className="intelligence-grid">
           <article><span>ATLAS EDGE</span><strong>{insights?.performance.atlasEdge == null ? "Collecting data" : insights.performance.atlasEdge.toFixed(3)}</strong><small>Average actual outcome minus predicted win probability</small></article>
           <article><span>MEMORY</span><strong>{insights ? `${insights.memory.tradeObservations} / ${insights.memory.nonTradeObservations}` : "—"}</strong><small>Trade / non-trade observations retained</small></article>
           <article><span>NEAR MISSES</span><strong>{insights?.nearMisses.length ?? "—"}</strong><small>Recent scores from 50–59, logged but never traded</small></article>
           <article><span>KNOWLEDGE GRAPH</span><strong>{insights ? `${insights.knowledgeGraph.nodes.length} nodes` : "—"}</strong><small>Ticker, catalyst, and market-regime relationships</small></article>
         </div>
-        <div className="calibration-bands">{insights?.bands.map((band) => <div key={band.band}><b>{band.band}</b><span>{band.count} observations</span><small>{band.closed ? `${Math.round((band.winRate ?? 0) * 100)}% wins / ${band.closed} closed` : "Awaiting outcomes"}</small></div>)}</div>
+        <div className="calibration-bands">{insights?.bands.map((band) => <div key={band.band}><b>{band.band}</b><span>{band.count} observations</span><small>{band.winRate !== null ? `${Math.round(band.winRate * 100)}% observed wins / ${band.closed} closed` : `${band.closed}/30 closed outcomes collected`}</small></div>)}</div>
         <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
       </section>
 

@@ -11,13 +11,13 @@ export async function GET(request: Request) {
     const tradeIds = new Set(observations.filter((row) => row.observationType === "TRADE").map((row) => row.id));
     const outcomes = closed.filter((row) => row.candidateId && tradeIds.has(row.candidateId));
     const wins = outcomes.filter((row) => (row.realizedPnl ?? 0) > 0).length;
-    return { band, count: observations.length, trades: tradeIds.size, closed: outcomes.length, wins, winRate: outcomes.length ? wins / outcomes.length : null };
+    return { band, count: observations.length, trades: tradeIds.size, closed: outcomes.length, wins, winRate: outcomes.length >= 30 ? wins / outcomes.length : null };
   });
   const realClosed = closed.filter((row) => !row.shadow);
   const shadowClosed = closed.filter((row) => row.shadow);
   const pnl = realClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const shadowPnl = shadowClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
-  const atlasEdge = realClosed.length ? realClosed.reduce((sum, row) => sum + (row.atlasEdge ?? 0), 0) / realClosed.length : null;
+  const atlasEdge = realClosed.length >= 30 ? realClosed.reduce((sum, row) => sum + (row.atlasEdge ?? 0), 0) / realClosed.length : null;
   const [journal, experimentRows, nodes, edges] = await Promise.all([
     db.select().from(learningJournal).orderBy(desc(learningJournal.id)).limit(30),
     db.select().from(experiments).orderBy(desc(experiments.id)).limit(30),
@@ -30,6 +30,8 @@ export async function GET(request: Request) {
     : [];
   return Response.json({
     threshold: 60,
+    phase: "INFORMATION_COLLECTION",
+    provenance: { news: "Finnhub company-news endpoint", quotes: "Finnhub quote endpoint", fills: "Paper calculations from observed scan quotes", unavailableInputsAreSynthetic: false },
     bands,
     nearMisses: candidateRows.filter((row) => row.nearMiss).slice(0, 50),
     confidenceTimeline: candidateRows.slice(0, 120).reverse().map((row) => ({ id: row.id, ticker: row.ticker, scanAt: row.scanAt, score: row.score, band: row.scoreBand, signals: JSON.parse(row.signalBreakdown || "[]") })),
