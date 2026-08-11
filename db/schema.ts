@@ -89,7 +89,7 @@ export const marketWeatherLog = sqliteTable("market_weather_log", {
 // Single-row simulated account: sizing basis, daily circuit breaker, realized P&L.
 export const accountState = sqliteTable("account_state", {
   id: integer("id").primaryKey(),
-  startingCapital: real("starting_capital").notNull().default(1000),
+  startingCapital: real("starting_capital").notNull().default(10000),
   maxOpenPositions: integer("max_open_positions").notNull().default(6),
   riskPerTradePct: real("risk_per_trade_pct").notNull().default(0.25),
   realizedPnl: real("realized_pnl").notNull().default(0),

@@ -147,6 +147,11 @@ export default function Home() {
     const wins = real.filter((p) => (p.realizedPnl ?? 0) > 0).length;
     return { count: real.length, wins, winRate: real.length ? Math.round((wins / real.length) * 100) : null };
   }, [closedPositions]);
+  const unrealizedPnl = openPositions.filter((p) => !p.shadow).reduce((sum, p) => {
+    const live = livePrices[p.ticker];
+    return sum + (live == null ? 0 : (live - p.entryPrice) * p.shares);
+  }, 0);
+  const portfolioValue = account ? account.startingCapital + account.realizedPnl + unrealizedPnl : null;
 
   const activeCandidates = candidates.filter((c) => c.status !== "DISQUALIFIED");
   const rejectedCandidates = candidates.filter((c) => c.status === "DISQUALIFIED");
@@ -194,6 +199,7 @@ export default function Home() {
           </div>
           <small>{account ? `${money((account.startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions, 0)} max per position · ${money(account.startingCapital * CASH_RESERVE_PCT / 100, 0)} held back` : ""}</small>
         </form>
+        <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Starting cash + realized and open-position P&amp;L</small></div>
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
         <div><span>TODAY'S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
         <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.winRate !== null ? `${closedStats.winRate}% win rate over ${closedStats.count} closed` : "No closed trades yet"}</small></div>
