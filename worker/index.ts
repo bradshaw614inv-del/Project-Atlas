@@ -1,10 +1,14 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
+import { drizzle } from "drizzle-orm/d1";
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import * as schema from "../db/schema";
+import { runScan } from "./engine";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  FINNHUB_API_KEY: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -41,6 +45,11 @@ const worker = {
     }
 
     return handler.fetch(request, env, ctx);
+  },
+
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    const db = drizzle(env.DB, { schema });
+    ctx.waitUntil(runScan(db, env.FINNHUB_API_KEY, new Date()));
   },
 };
 
