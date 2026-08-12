@@ -66,7 +66,6 @@ export default function Home() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [showRejected, setShowRejected] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
 
   async function refreshState() {
@@ -255,10 +254,11 @@ export default function Home() {
           <CandidateRow key={c.id} c={c} />
         ))}</div>}
 
-        {rejectedCandidates.length > 0 && <details className="rejected-toggle" open={showRejected} onToggle={(e) => setShowRejected(e.currentTarget.open)}>
-          <summary>Show {rejectedCandidates.length} rejected candidates</summary>
-          <div className="candidate-list">{rejectedCandidates.map((c) => <CandidateRow key={c.id} c={c} />)}</div>
-        </details>}
+        {rejectedCandidates.length > 0 && <section className="evidence-stream" aria-labelledby="evidence-stream-title">
+          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Latest real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
+          <p>These real stories were evaluated and rejected. A rejection is useful evidence—not inactivity—and never creates a paper trade.</p>
+          <div className="candidate-list">{rejectedCandidates.slice(0, 30).map((c) => <CandidateRow key={c.id} c={c} />)}</div>
+        </section>}
       </section>
 
       <section className="intelligence-panel">
