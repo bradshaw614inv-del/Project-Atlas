@@ -156,8 +156,10 @@ export default function Home() {
   }, 0);
   const portfolioValue = account ? account.startingCapital + account.realizedPnl + unrealizedPnl : null;
 
-  const activeCandidates = candidates.filter((c) => c.status !== "DISQUALIFIED");
-  const rejectedCandidates = candidates.filter((c) => c.status === "DISQUALIFIED");
+  const highestScoreFirst = (a: Candidate, b: Candidate) =>
+    b.score - a.score || new Date(b.scanAt).getTime() - new Date(a.scanAt).getTime();
+  const activeCandidates = candidates.filter((c) => c.status !== "DISQUALIFIED").sort(highestScoreFirst);
+  const rejectedCandidates = candidates.filter((c) => c.status === "DISQUALIFIED").sort(highestScoreFirst);
 
   const maxOpenPositions = account?.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS;
   const riskPerTradePct = account?.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT;
@@ -248,14 +250,14 @@ export default function Home() {
       </section>
 
       <section className="watchlist-panel">
-        <div className="watchlist-head"><div><span>LIVE SCORING FEED</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
+        <div className="watchlist-head"><div><span>LIVE SCORING FEED · HIGHEST SCORE FIRST</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
 
         {activeCandidates.length === 0 ? <p className="watchlist-empty">Nothing is currently worth watching. Atlas doesn't force trades — no qualifying story means no trade.</p> : <div className="candidate-list">{activeCandidates.map((c) => (
           <CandidateRow key={c.id} c={c} />
         ))}</div>}
 
         {rejectedCandidates.length > 0 && <section className="evidence-stream" aria-labelledby="evidence-stream-title">
-          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Latest real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
+          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Highest-scoring real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
           <p>These real stories were evaluated and rejected. A rejection is useful evidence—not inactivity—and never creates a paper trade.</p>
           <div className="candidate-list">{rejectedCandidates.slice(0, 30).map((c) => <CandidateRow key={c.id} c={c} />)}</div>
         </section>}
