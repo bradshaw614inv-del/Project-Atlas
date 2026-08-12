@@ -17,6 +17,7 @@ type Account = {
 };
 type Weather = { classification: "TRADE_ELIGIBLE" | "CAUTION" | "SIT_OUT"; flags: string[]; spyPrice: number | null; spyChangePct: number | null; qqqChangePct: number | null; scanAt: string };
 type ScanRun = { startedAt: string; finishedAt: string | null; storiesFetched: number; candidatesEvaluated: number; positionsOpened: number; positionsClosed: number; error: string | null };
+type CollectionHealth = { healthy: boolean; totalRecentStories: number; totalRecentCandidates: number; recentScans: ScanRun[] };
 type Position = {
   id: number; ticker: string; status: "OPEN" | "CLOSED"; shadow: number; entryPrice: number; entryAt: string;
   shares: number; stopPrice: number; highWaterMark: number; trailingActivated: number;
@@ -54,6 +55,7 @@ export default function Home() {
   const [account, setAccount] = useState<Account | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [lastScan, setLastScan] = useState<ScanRun | null>(null);
+  const [collectionHealth, setCollectionHealth] = useState<CollectionHealth | null>(null);
   const [openPositions, setOpenPositions] = useState<Position[]>([]);
   const [closedPositions, setClosedPositions] = useState<Position[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -68,10 +70,11 @@ export default function Home() {
   const [insights, setInsights] = useState<Insights | null>(null);
 
   async function refreshState() {
-    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null }>("/api/state");
+    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth }>("/api/state");
     setAccount(data.account);
     setWeather(data.weather);
     setLastScan(data.lastScan);
+    setCollectionHealth(data.collectionHealth);
     if (data.account && !settingsLoaded) {
       setCapitalDraft(String(data.account.startingCapital));
       setMaxPositionsDraft(String(data.account.maxOpenPositions));
@@ -169,6 +172,7 @@ export default function Home() {
       </header>
 
       <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, companies, news, timestamps, and market quotes must be real and source-traceable. Only the paper execution and its calculated return or loss are simulated. Missing market inputs stay unavailable—never estimated, invented, or replaced.</span></section>
+      <section className={`collection-health ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} actionable-window observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Research retains seven days of real company news; paper trades still require news observed within 90 minutes and a score of 60+.</small></section>
 
       <section className="hero forward-hero">
         <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stocks, real companies, real news, and real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
