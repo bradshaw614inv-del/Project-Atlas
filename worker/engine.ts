@@ -47,7 +47,8 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
     const pairs: { ticker: string; story: typeof schema.newsStories.$inferSelect }[] = [];
     for (const ticker of TICKER_UNIVERSE) {
       const items = await getCompanyNews(apiKey, ticker, collectionStartIso, todayIso).catch(() => []);
-      for (const item of items.slice(0, 10)) {
+      const newestItems = [...items].sort((a, b) => b.datetime - a.datetime).slice(0, 10);
+      for (const item of newestItems) {
         const publishedAt = new Date(item.datetime * 1000);
         const ageMinutes = (now.getTime() - publishedAt.getTime()) / 60000;
 
