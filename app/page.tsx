@@ -17,6 +17,7 @@ type Account = {
 };
 type Weather = { classification: "TRADE_ELIGIBLE" | "CAUTION" | "SIT_OUT"; flags: string[]; spyPrice: number | null; spyChangePct: number | null; qqqChangePct: number | null; scanAt: string };
 type ScanRun = { startedAt: string; finishedAt: string | null; storiesFetched: number; candidatesEvaluated: number; positionsOpened: number; positionsClosed: number; error: string | null };
+type CollectionHealth = { healthy: boolean; totalRecentStories: number; totalRecentCandidates: number; recentScans: ScanRun[] };
 type Position = {
   id: number; ticker: string; status: "OPEN" | "CLOSED"; shadow: number; entryPrice: number; entryAt: string;
   shares: number; stopPrice: number; highWaterMark: number; trailingActivated: number;
@@ -54,6 +55,7 @@ export default function Home() {
   const [account, setAccount] = useState<Account | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [lastScan, setLastScan] = useState<ScanRun | null>(null);
+  const [collectionHealth, setCollectionHealth] = useState<CollectionHealth | null>(null);
   const [openPositions, setOpenPositions] = useState<Position[]>([]);
   const [closedPositions, setClosedPositions] = useState<Position[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
@@ -64,14 +66,14 @@ export default function Home() {
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const [showRejected, setShowRejected] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
 
   async function refreshState() {
-    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null }>("/api/state");
+    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth }>("/api/state");
     setAccount(data.account);
     setWeather(data.weather);
     setLastScan(data.lastScan);
+    setCollectionHealth(data.collectionHealth);
     if (data.account && !settingsLoaded) {
       setCapitalDraft(String(data.account.startingCapital));
       setMaxPositionsDraft(String(data.account.maxOpenPositions));
@@ -168,10 +170,11 @@ export default function Home() {
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
-      <section className="truth-banner"><strong>REAL DATA ONLY</strong><span>Atlas records verified Finnhub news and quotes. Missing spread, volume, breadth, VWAP, volatility, or fill data stays unavailable—never estimated, invented, or replaced with synthetic values.</span></section>
+      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, companies, news, timestamps, and market quotes must be real and source-traceable. Only the paper execution and its calculated return or loss are simulated. Missing market inputs stay unavailable—never estimated, invented, or replaced.</span></section>
+      <section className={`collection-health ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
 
       <section className="hero forward-hero">
-        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real company news and quotes, records every trade and non-trade observation, and runs transparent paper trades. No synthetic history, invented fills, or assumed market data.</p></div>
+        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stocks, real companies, real news, and real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "RUN A SCAN NOW"}</button>
       </section>
 
@@ -251,10 +254,11 @@ export default function Home() {
           <CandidateRow key={c.id} c={c} />
         ))}</div>}
 
-        {rejectedCandidates.length > 0 && <details className="rejected-toggle" open={showRejected} onToggle={(e) => setShowRejected(e.currentTarget.open)}>
-          <summary>Show {rejectedCandidates.length} rejected candidates</summary>
-          <div className="candidate-list">{rejectedCandidates.map((c) => <CandidateRow key={c.id} c={c} />)}</div>
-        </details>}
+        {rejectedCandidates.length > 0 && <section className="evidence-stream" aria-labelledby="evidence-stream-title">
+          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Latest real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
+          <p>These real stories were evaluated and rejected. A rejection is useful evidence—not inactivity—and never creates a paper trade.</p>
+          <div className="candidate-list">{rejectedCandidates.slice(0, 30).map((c) => <CandidateRow key={c.id} c={c} />)}</div>
+        </section>}
       </section>
 
       <section className="intelligence-panel">

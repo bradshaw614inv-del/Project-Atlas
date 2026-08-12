@@ -1,5 +1,27 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "entries": []
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1785860573303,
+      "tag": "0000_parallel_blue_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1785870327518,
+      "tag": "0001_busy_freak",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786406784639,
+      "tag": "0002_green_maestro",
+      "breakpoints": true
+    }
+  ]
 }
