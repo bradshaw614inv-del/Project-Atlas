@@ -10,7 +10,7 @@ import { TICKER_UNIVERSE } from "./universe";
 type Db = DrizzleD1Database<typeof schema>;
 
 const LOOKBACK_MINUTES = 90;
-const COLLECTION_LOOKBACK_DAYS = 7;
+const COLLECTION_LOOKBACK_DAYS = 1;
 const MAX_CANDIDATE_TICKERS = 15;
 
 export async function runScan(db: Db, apiKey: string, now: Date) {
@@ -44,7 +44,7 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
     const pairs: { ticker: string; story: typeof schema.newsStories.$inferSelect }[] = [];
     for (const ticker of TICKER_UNIVERSE) {
       const items = await getCompanyNews(apiKey, ticker, collectionStartIso, todayIso).catch(() => []);
-      for (const item of items.slice(0, 25)) {
+      for (const item of items.slice(0, 10)) {
         const publishedAt = new Date(item.datetime * 1000);
         const ageMinutes = (now.getTime() - publishedAt.getTime()) / 60000;
 
