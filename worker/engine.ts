@@ -9,7 +9,10 @@ import { TICKER_UNIVERSE } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
 
-const LOOKBACK_MINUTES = 90;
+// Finnhub's free company-news feed is commonly delivered several hours after
+// publication. Six hours matches the scorer's existing freshness hard gate and
+// lets Atlas study real delayed stories without pretending they arrived live.
+const LOOKBACK_MINUTES = 360;
 const COLLECTION_LOOKBACK_DAYS = 1;
 const MAX_CANDIDATE_TICKERS = 15;
 
