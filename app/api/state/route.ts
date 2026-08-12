@@ -7,11 +7,18 @@ export async function GET() {
   const [account] = await db.select().from(accountState).where(eq(accountState.id, 1)).limit(1);
   const [weather] = await db.select().from(marketWeatherLog).orderBy(desc(marketWeatherLog.id)).limit(1);
   const [lastScan] = await db.select().from(scanRuns).orderBy(desc(scanRuns.id)).limit(1);
+  const recentScans = await db.select().from(scanRuns).orderBy(desc(scanRuns.id)).limit(12);
 
   return Response.json({
     account: account ?? null,
     weather: weather ? { ...weather, flags: JSON.parse(weather.reasonFlags || "[]") } : null,
     lastScan: lastScan ?? null,
+    collectionHealth: {
+      recentScans,
+      totalRecentStories: recentScans.reduce((sum, scan) => sum + scan.storiesFetched, 0),
+      totalRecentCandidates: recentScans.reduce((sum, scan) => sum + scan.candidatesEvaluated, 0),
+      healthy: !!lastScan?.finishedAt && !lastScan.error && Date.now() - new Date(lastScan.startedAt).getTime() < 15 * 60 * 1000,
+    },
   });
 }
 

@@ -2,14 +2,18 @@ import { and, desc, eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { getCompanyNews, getQuote, type FinnhubQuote } from "./finnhub";
-import { getMarketClock, isForceCloseTime, isWithinEntryWindow, isWithinScanWindow, type MarketClock } from "./market-hours";
+import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, computeEntryPlan, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { TICKER_UNIVERSE } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
 
-const LOOKBACK_MINUTES = 90;
+// Finnhub's free company-news feed is commonly delivered several hours after
+// publication. Six hours matches the scorer's existing freshness hard gate and
+// lets Atlas study real delayed stories without pretending they arrived live.
+const LOOKBACK_MINUTES = 360;
+const COLLECTION_LOOKBACK_DAYS = 1;
 const MAX_CANDIDATE_TICKERS = 15;
 
 export async function runScan(db: Db, apiKey: string, now: Date) {
@@ -19,11 +23,6 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
 
   try {
     const clock = getMarketClock(now);
-
-    if (!isWithinScanWindow(clock)) {
-      await db.update(schema.scanRuns).set({ finishedAt: new Date().toISOString(), error: null }).where(eq(schema.scanRuns.id, scanRun.id));
-      return;
-    }
 
     const account = await getOrCreateAccountState(db, clock.tradingDay);
 
@@ -42,12 +41,16 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
     });
 
     const todayIso = clock.tradingDay;
+    const collectionStart = new Date(now);
+    collectionStart.setUTCDate(collectionStart.getUTCDate() - COLLECTION_LOOKBACK_DAYS);
+    const collectionStartIso = collectionStart.toISOString().slice(0, 10);
     const pairs: { ticker: string; story: typeof schema.newsStories.$inferSelect }[] = [];
     for (const ticker of TICKER_UNIVERSE) {
-      const items = await getCompanyNews(apiKey, ticker, todayIso, todayIso).catch(() => []);
-      for (const item of items.slice(0, 5)) {
+      const items = await getCompanyNews(apiKey, ticker, collectionStartIso, todayIso).catch(() => []);
+      const newestItems = [...items].sort((a, b) => b.datetime - a.datetime).slice(0, 10);
+      for (const item of newestItems) {
         const publishedAt = new Date(item.datetime * 1000);
-        if (now.getTime() - publishedAt.getTime() > LOOKBACK_MINUTES * 60000) continue; // too old to act on — skip ingesting
+        const ageMinutes = (now.getTime() - publishedAt.getTime()) / 60000;
 
         const existing = await db.select().from(schema.newsStories).where(eq(schema.newsStories.finnhubId, String(item.id))).limit(1);
         let story = existing[0];
@@ -66,7 +69,9 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
           story = inserted;
           storiesFetched++;
         }
-        pairs.push({ ticker, story });
+        // Keep real historical observations for research, but only let news
+        // observed within the action window enter live scoring.
+        if (ageMinutes <= LOOKBACK_MINUTES) pairs.push({ ticker, story });
       }
     }
 
