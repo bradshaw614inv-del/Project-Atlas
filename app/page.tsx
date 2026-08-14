@@ -9,6 +9,11 @@ import {
 const STATE_POLL_MS = 15000;
 const CANDIDATES_POLL_MS = 30000;
 const MIN_VALIDATED_SAMPLE = 30;
+const CRYPTO_TICKERS = new Set(["BTC", "ETH", "SOL", "XRP"]);
+
+function assetClass(ticker: string) {
+  return CRYPTO_TICKERS.has(ticker) ? `crypto crypto-${ticker.toLowerCase()}` : "stock";
+}
 
 type Account = {
   startingCapital: number; maxOpenPositions: number; riskPerTradePct: number;
@@ -229,7 +234,7 @@ export default function Home() {
           const live = livePrices[p.ticker];
           const unrealized = live ? (live - p.entryPrice) * p.shares : null;
           return <article className="event-card" key={p.id}>
-            <div className="event-top"><div><span className="category">{p.shadow ? "SHADOW (SIT-OUT DAY)" : "LIVE SIMULATION"}</span><strong>{p.ticker}</strong></div><time>{displayDate(p.entryAt)}</time></div>
+            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? "CRYPTO" : p.shadow ? "SHADOW (SIT-OUT DAY)" : "STOCK"}</span><strong>{p.ticker}</strong></div><time>{displayDate(p.entryAt)}</time></div>
             <h3>{p.headline || "—"}</h3>
             <div className="event-numbers">
               <div><span>ENTRY</span><b>{money(p.entryPrice)}</b></div>
@@ -248,7 +253,7 @@ export default function Home() {
         <div className="tracker-head"><div><span>TRADE HISTORY</span><h2>Closed positions</h2><p>Every closed trade, win or loss — nothing is hidden or removed.</p></div></div>
         {closedPositions.length === 0 ? <div className="empty"><p>No closed trades yet.</p></div> : <div className="event-grid">{closedPositions.map((p) => (
           <article className="event-card" key={p.id}>
-            <div className="event-top"><div><span className="category">{p.shadow ? "SHADOW" : p.exitReason}</span><strong>{p.ticker}</strong></div><time>{p.exitAt ? displayDate(p.exitAt) : ""}</time></div>
+            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? `CRYPTO · ${p.shadow ? "SHADOW" : p.exitReason}` : p.shadow ? "SHADOW" : p.exitReason}</span><strong>{p.ticker}</strong></div><time>{p.exitAt ? displayDate(p.exitAt) : ""}</time></div>
             <h3>{p.headline || "—"}</h3>
             <div className="event-numbers">
               <div><span>ENTRY → EXIT</span><b>{money(p.entryPrice)} → {p.exitPrice ? money(p.exitPrice) : "—"}</b></div>
@@ -282,7 +287,7 @@ export default function Home() {
           <article><span>KNOWLEDGE GRAPH</span><strong>{insights ? `${insights.knowledgeGraph.nodes.length} nodes` : "—"}</strong><small>Ticker, catalyst, and market-regime relationships</small></article>
         </div>
         <div className="calibration-bands">{insights?.bands.map((band) => <div key={band.band}><b>{band.band}</b><span>{band.count} observations</span><small>{band.winRate !== null ? `${Math.round(band.winRate * 100)}% observed wins / ${band.closed} closed` : `${band.closed}/30 closed outcomes collected`}</small></div>)}</div>
-        <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
+        <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div className={assetClass(point.ticker)} key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
       </section>
 
       <section className="safety-panel" aria-labelledby="safety-title">
@@ -308,10 +313,10 @@ export default function Home() {
 }
 
 function CandidateRow({ c }: { c: Candidate }) {
-  return <article className={`candidate-row status-${c.status.toLowerCase()}`}>
+  return <article className={`candidate-row status-${c.status.toLowerCase()} ${assetClass(c.ticker)}`}>
     <div className="candidate-badge">{c.status}</div>
     <div className="candidate-main">
-      <div className="candidate-top"><strong>{c.ticker}</strong><span>{c.score.toFixed(0)}/100</span><time>{timeAgo(c.scanAt)}</time></div>
+      <div className="candidate-top"><strong>{c.ticker}</strong>{CRYPTO_TICKERS.has(c.ticker) && <em>CRYPTO</em>}<span>{c.score.toFixed(0)}/100</span><time>{timeAgo(c.scanAt)}</time></div>
       <p className="candidate-headline">{c.headline}{c.source && <span className="candidate-source"> — {c.source}</span>}{c.sourceUrl && <a href={c.sourceUrl} target="_blank" rel="noreferrer" className="candidate-link">↗</a>}</p>
       <p className="candidate-reason">{c.reason}</p>
       {c.signals?.length > 0 && <details className="score-breakdown"><summary>Confidence breakdown · analyst {c.analystScore.toFixed(0)} − skeptic {c.skepticPenalty.toFixed(0)}</summary>{c.signals.map((signal) => <div key={signal.key}><b>{signal.label}</b><span>{signal.score.toFixed(1)}/{signal.max}</span><small>{signal.evidence}</small></div>)}</details>}
