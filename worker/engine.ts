@@ -108,6 +108,13 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
     }
 
     const uniqueTickers = Array.from(new Set(pairs.map((p) => p.ticker))).slice(0, MAX_CANDIDATE_TICKERS);
+    const independentSourcesByTicker = new Map<string, number>();
+    for (const ticker of uniqueTickers) {
+      const sources = new Set(pairs
+        .filter((pair) => pair.ticker === ticker && pair.story.source.trim() && /^https?:\/\//i.test(pair.story.url))
+        .map((pair) => pair.story.source.trim().toLowerCase()));
+      independentSourcesByTicker.set(ticker, sources.size);
+    }
     const quoteMap = new Map<string, FinnhubQuote | null>();
     for (const ticker of uniqueTickers) {
       quoteMap.set(ticker, await getQuote(apiKey, quoteSymbolForTicker(ticker)).catch(() => null));
@@ -134,7 +141,11 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
         && lastCandidate.status !== "DISQUALIFIED";
       const minutesSincePublished = (now.getTime() - new Date(story.publishedAt).getTime()) / 60000;
 
-      const result = scoreCandidate({ ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct, minutesSincePublished, seenConfirmationEligibleLastScan });
+      const result = scoreCandidate({
+        ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct,
+        minutesSincePublished, seenConfirmationEligibleLastScan, source: story.source, sourceUrl: story.url,
+        independentSourceCount: independentSourcesByTicker.get(ticker) ?? 0,
+      });
 
       const [candidateRow] = await db.insert(schema.candidates).values({
         storyId: story.id,

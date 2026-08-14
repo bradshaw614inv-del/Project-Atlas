@@ -37,7 +37,7 @@ type Candidate = {
   scoreBand: string; nearMiss: number; analystScore: number; skepticPenalty: number;
   signals: { key: string; label: string; score: number; max: number; evidence: string }[];
 };
-type Insights = { threshold: number; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: unknown[]; edges: unknown[] } };
+type Insights = { threshold: number; provenance: { providerCount: number; providers: string[]; outletCount: number; outlets: string[]; traceableStories: number; storiesChecked: number }; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: unknown[]; edges: unknown[] } };
 
 function money(n: number, digits = 2) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
@@ -288,6 +288,12 @@ export default function Home() {
         </div>
         <div className="calibration-bands">{insights?.bands.map((band) => <div key={band.band}><b>{band.band}</b><span>{band.count} observations</span><small>{band.winRate !== null ? `${Math.round(band.winRate * 100)}% observed wins / ${band.closed} closed` : `${band.closed}/30 closed outcomes collected`}</small></div>)}</div>
         <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div className={assetClass(point.ticker)} key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
+      </section>
+
+      <section className="source-panel" aria-labelledby="source-title">
+        <div><span>EVIDENCE COVERAGE</span><h2 id="source-title">Every score shows its sourcing limits</h2><p>Atlas currently uses one upstream provider and measures the independent outlets carried by that feed. A traceable URL is mandatory for full source credit; one-outlet stories receive a skeptic penalty until corroborated.</p></div>
+        <div className="source-stats"><article><strong>{insights?.provenance.providerCount ?? "—"}</strong><span>upstream provider</span></article><article><strong>{insights?.provenance.outletCount ?? "—"}</strong><span>distinct outlets</span></article><article><strong>{insights ? `${insights.provenance.traceableStories}/${insights.provenance.storiesChecked}` : "—"}</strong><span>traceable stories</span></article></div>
+        <p className="source-list">{insights?.provenance.outlets.slice(0, 18).join(" · ") || "Waiting for verified outlets"}</p>
       </section>
 
       <section className="readiness-panel" aria-labelledby="readiness-title">

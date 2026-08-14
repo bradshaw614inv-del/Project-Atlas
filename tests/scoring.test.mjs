@@ -13,7 +13,7 @@ test("keeps the live trade threshold at 60 and requires a confirming scan", () =
 
 test("returns independent analyst-versus-skeptic confidence signals", () => {
   const result = scoreCandidate({ ...strong, seenConfirmationEligibleLastScan: true });
-  assert.deepEqual(result.signals.map((signal) => signal.key), ["catalyst", "price_confirmation", "freshness", "persistence"]);
+  assert.deepEqual(result.signals.map((signal) => signal.key), ["catalyst", "price_confirmation", "freshness", "persistence", "source_verification"]);
   assert.equal(result.score, result.analystScore - result.skepticPenalty);
 });
 
@@ -21,6 +21,13 @@ test("hard disqualifiers cannot be overcome by confidence", () => {
   const result = scoreCandidate({ ...strong, headline: "Company cuts guidance", seenConfirmationEligibleLastScan: true });
   assert.equal(result.status, "DISQUALIFIED");
   assert.equal(result.score, 0);
+});
+
+test("single-outlet evidence receives a skeptic penalty until independently corroborated", () => {
+  const single = scoreCandidate({ ...strong, seenConfirmationEligibleLastScan: true, source: "Reuters", sourceUrl: "https://example.com/story", independentSourceCount: 1 });
+  const corroborated = scoreCandidate({ ...strong, seenConfirmationEligibleLastScan: true, source: "Reuters", sourceUrl: "https://example.com/story", independentSourceCount: 2 });
+  assert.equal(single.skepticPenalty - corroborated.skepticPenalty, 5);
+  assert.ok(corroborated.score > single.score);
 });
 
 test("wash-sale guard blocks a loss ticker without changing the threshold", () => {

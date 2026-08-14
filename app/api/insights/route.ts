@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
-import { candidates, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, positionEvents, positions, scanRuns } from "../../../db/schema";
+import { candidates, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns } from "../../../db/schema";
 
 const PAPER_TRADE_TARGET = 100;
 const HOLDOUT_TRADE_TARGET = 30;
@@ -21,14 +21,17 @@ export async function GET(request: Request) {
   const pnl = realClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const shadowPnl = shadowClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const atlasEdge = realClosed.length >= 30 ? realClosed.reduce((sum, row) => sum + (row.atlasEdge ?? 0), 0) / realClosed.length : null;
-  const [journal, experimentRows, nodes, edges, scans, weatherRows] = await Promise.all([
+  const [journal, experimentRows, nodes, edges, scans, weatherRows, stories] = await Promise.all([
     db.select().from(learningJournal).orderBy(desc(learningJournal.id)).limit(30),
     db.select().from(experiments).orderBy(desc(experiments.id)).limit(30),
     db.select().from(knowledgeNodes).limit(100),
     db.select().from(knowledgeEdges).orderBy(desc(knowledgeEdges.id)).limit(200),
     db.select().from(scanRuns).orderBy(desc(scanRuns.id)).limit(250),
     db.select().from(marketWeatherLog).orderBy(desc(marketWeatherLog.id)).limit(100),
+    db.select().from(newsStories).orderBy(desc(newsStories.id)).limit(1000),
   ]);
+  const traceableStories = stories.filter((story) => story.source.trim() && /^https?:\/\//i.test(story.url));
+  const outlets = Array.from(new Set(traceableStories.map((story) => story.source.trim()).filter(Boolean))).sort();
   const completedScans = scans.filter((scan) => scan.finishedAt && !scan.error).length;
   const failedScans = scans.filter((scan) => !!scan.error).length;
   const recentCompleteness = weatherRows.map((row) => {
@@ -55,7 +58,7 @@ export async function GET(request: Request) {
   return Response.json({
     threshold: 60,
     phase: "INFORMATION_COLLECTION",
-    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", news: "Finnhub company-news endpoint", quotes: "Finnhub quote endpoint", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false },
+    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 1, providers: ["Finnhub"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub company-news and crypto-news endpoints", quotes: "Finnhub quote endpoint", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false },
     bands,
     nearMisses: candidateRows.filter((row) => row.nearMiss).slice(0, 50),
     confidenceTimeline: candidateRows.slice(0, 120).reverse().map((row) => ({ id: row.id, ticker: row.ticker, scanAt: row.scanAt, score: row.score, band: row.scoreBand, signals: JSON.parse(row.signalBreakdown || "[]") })),
