@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { scoreCandidate, TRADE_THRESHOLD } from "../worker/scoring.ts";
+import { classifyMarketWeather, scoreCandidate, TRADE_THRESHOLD } from "../worker/scoring.ts";
 
 const strong = { headline: "Company beats estimates and raises guidance", summary: "Record revenue", priceAtScan: 25, priceChangePct: 2, minutesSincePublished: 20 };
 
@@ -20,4 +20,18 @@ test("hard disqualifiers cannot be overcome by confidence", () => {
   const result = scoreCandidate({ ...strong, headline: "Company cuts guidance", seenQualifyingLastScan: true });
   assert.equal(result.status, "DISQUALIFIED");
   assert.equal(result.score, 0);
+});
+
+test("wash-sale guard blocks a loss ticker without changing the threshold", () => {
+  const result = scoreCandidate({ ...strong, ticker: "GME", now: new Date("2026-08-20T14:00:00Z"), seenQualifyingLastScan: true });
+  assert.equal(result.status, "DISQUALIFIED");
+  assert.match(result.reason, /Wash-sale guard/);
+  assert.equal(TRADE_THRESHOLD, 60);
+});
+
+test("three independent negative weather flags force SIT_OUT", () => {
+  const quote = (dp, c = 100) => ({ c, d: 0, dp, h: c, o: c, l: c, pc: c, t: 1 });
+  const result = classifyMarketWeather({ spy: quote(-0.2, 99), qqq: quote(-0.3), spyVwap: 100, advancers: 5, decliners: 15, breadthSample: 20, volatilityProxy: quote(1.2) });
+  assert.equal(result.classification, "SIT_OUT");
+  assert.ok(result.negativeFlags >= 3);
 });

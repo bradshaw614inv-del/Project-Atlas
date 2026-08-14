@@ -8,7 +8,7 @@ import {
 
 const STATE_POLL_MS = 15000;
 const CANDIDATES_POLL_MS = 30000;
-const MIN_VALIDATED_SAMPLE = 30;
+const MIN_VALIDATED_SAMPLE = 100;
 
 type Account = {
   startingCapital: number; maxOpenPositions: number; riskPerTradePct: number;
@@ -31,7 +31,7 @@ type Candidate = {
   scoreBand: string; nearMiss: number; analystScore: number; skepticPenalty: number;
   signals: { key: string; label: string; score: number; max: number; evidence: string }[];
 };
-type Insights = { threshold: number; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: unknown[]; edges: unknown[] } };
+type Insights = { threshold: number; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: unknown[]; edges: unknown[] } };
 
 function money(n: number, digits = 2) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
@@ -269,6 +269,12 @@ export default function Home() {
         <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
       </section>
 
+      <section className="readiness-panel" aria-labelledby="readiness-title">
+        <div className="readiness-head"><div><span>LIVE-CAPITAL READINESS</span><h2 id="readiness-title">Evidence before confidence</h2><p>Historical replay can accelerate learning, but only prospective paper trades and a frozen-rule holdout can unlock a pilot review.</p></div><strong className={insights?.readiness.status === "PILOT_REVIEW" ? "ready" : "not-ready"}>{insights?.readiness.status === "PILOT_REVIEW" ? "PILOT REVIEW" : "NOT READY"}</strong></div>
+        <div className="readiness-gates">{insights?.readiness.gates.map((gate) => <article key={gate.label} className={gate.passed ? "passed" : "pending"}><i>{gate.passed ? "✓" : "·"}</i><div><b>{gate.label}</b><small>{gate.value}</small></div></article>)}</div>
+        <div className="readiness-note"><b>Current policy</b><span>60-point threshold remains fixed</span><span>100 prospective closed trades</span><span>30-trade frozen holdout</span><span>80%+ weather completeness</span><span>zero forced trades</span></div>
+      </section>
+
       <section className="safety-panel" aria-labelledby="safety-title">
         <div className="safety-heading">
           <div><span>ENGINE RULES · PAPER SIMULATION</span><h2 id="safety-title">What Atlas will never do</h2><p>These are hard-coded in the scan engine, not preferences — there is no manual override. Account size and risk per trade are set above; allocation is fixed at five equal slots.</p></div>
@@ -282,8 +288,9 @@ export default function Home() {
           <SafetyRule value={`${COOLDOWN_MINUTES} min`} label="Stop-out cooldown" detail="No immediate re-entry into a ticker after a loss — a genuinely new signal is required." />
           <SafetyRule value="10:00–3:45 ET" label="Entry window" detail="Stock and crypto entries use the same U.S. trading-day window. No new positions in the first 30 or final 15 minutes." />
           <SafetyRule value="Flat by 3:45" label="No overnight risk" detail="Every open position force-closes before the close — Robinhood stops don't execute after hours." />
+          <SafetyRule value="20 / 50 bps" label="Simulated round-trip costs" detail="Stocks / crypto use conservative, predeclared spread-and-slippage assumptions. These are simulated execution costs, never presented as observed quotes." />
         </div>
-        <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>real, dated news only</span><span>two consecutive qualifying scans</span><span>market not "Sit out"</span><span>price confirmed, not extended</span><span>no negative-sentiment keywords</span><span>no duplicate open position</span><span>no forced trade quota</span></div>
+        <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>real, dated news only</span><span>two consecutive qualifying scans</span><span>market not "Sit out"</span><span>price confirmed, not extended</span><span>wash-sale blacklist clear</span><span>no negative-sentiment keywords</span><span>no duplicate open position</span><span>no forced trade quota</span></div>
       </section>
 
       <footer><span>ATLAS AUTOMATED SIMULATOR</span><span>Fully simulated — never places a real order on Robinhood or any brokerage.</span></footer>

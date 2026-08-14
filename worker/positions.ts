@@ -13,6 +13,13 @@ export const CASH_RESERVE_PCT = 0;
 export const DAILY_LOSS_LIMIT_PCT = 1;
 export const COOLDOWN_MINUTES = 30;
 export const TRAILING_DISTANCE_PCT = 1.5;
+export const STOCK_ROUND_TRIP_COST_BPS = 20;
+export const CRYPTO_ROUND_TRIP_COST_BPS = 50;
+
+export function executionPrice(observedPrice: number, side: "BUY" | "SELL", isCrypto: boolean) {
+  const halfCost = (isCrypto ? CRYPTO_ROUND_TRIP_COST_BPS : STOCK_ROUND_TRIP_COST_BPS) / 2 / 10_000;
+  return side === "BUY" ? observedPrice * (1 + halfCost) : observedPrice * (1 - halfCost);
+}
 
 export function computeEntryPlan(startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number) {
   const riskDollar = (startingCapital * riskPerTradePct) / 100;

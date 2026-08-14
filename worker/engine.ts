@@ -1,11 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
-import { getCompanyNews, getCryptoNews, getQuote, type FinnhubQuote } from "./finnhub";
+import { candleVwap, getCandles, getCompanyNews, getCryptoNews, getQuote, type FinnhubQuote } from "./finnhub";
 import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
-import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, manageStagedStop } from "./positions";
+import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
-import { TICKER_UNIVERSE, cryptoTickersForStory, quoteSymbolForTicker } from "./universe";
+import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -26,11 +26,21 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
 
     const account = await getOrCreateAccountState(db, clock.tradingDay);
 
-    const [spy, qqq] = await Promise.all([
+    const sessionFrom = Math.floor((now.getTime() - 8 * 60 * 60 * 1000) / 1000);
+    const [spy, qqq, volatilityProxy, spyCandles, ...breadthQuotes] = await Promise.all([
       getQuote(apiKey, "SPY").catch(() => null),
       getQuote(apiKey, "QQQ").catch(() => null),
+      getQuote(apiKey, "VIXY").catch(() => null),
+      getCandles(apiKey, "SPY", sessionFrom, Math.floor(now.getTime() / 1000)).catch(() => null),
+      ...TICKER_UNIVERSE.map((ticker) => getQuote(apiKey, ticker).catch(() => null)),
     ]);
-    const weather = classifyMarketWeather(spy, qqq);
+    const breadth = breadthQuotes.filter((quote): quote is FinnhubQuote => !!quote && quote.dp !== null);
+    const weather = classifyMarketWeather({
+      spy, qqq, spyVwap: candleVwap(spyCandles),
+      advancers: breadth.filter((quote) => (quote.dp ?? 0) > 0).length,
+      decliners: breadth.filter((quote) => (quote.dp ?? 0) < 0).length,
+      breadthSample: breadth.length, volatilityProxy,
+    });
     await db.insert(schema.marketWeatherLog).values({
       scanAt: startedAt,
       classification: weather.classification,
@@ -119,7 +129,7 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
       const seenQualifyingLastScan = !!lastCandidate && lastCandidate.score >= TRADE_THRESHOLD && lastCandidate.status !== "DISQUALIFIED";
       const minutesSincePublished = (now.getTime() - new Date(story.publishedAt).getTime()) / 60000;
 
-      const result = scoreCandidate({ headline: story.headline, summary: story.summary, priceAtScan, priceChangePct, minutesSincePublished, seenQualifyingLastScan });
+      const result = scoreCandidate({ ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct, minutesSincePublished, seenQualifyingLastScan });
 
       const [candidateRow] = await db.insert(schema.candidates).values({
         storyId: story.id,
@@ -265,7 +275,8 @@ async function tryOpenPosition(db: Db, input: {
     }
   }
 
-  const plan = computeEntryPlan(input.account.startingCapital, input.priceAtScan, input.account.riskPerTradePct, input.account.maxOpenPositions);
+  const simulatedEntryPrice = executionPrice(input.priceAtScan, "BUY", isCryptoTicker(input.ticker));
+  const plan = computeEntryPlan(input.account.startingCapital, simulatedEntryPrice, input.account.riskPerTradePct, input.account.maxOpenPositions);
   if (plan.shares <= 0) {
     await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: computed position size is zero for this account amount.");
     return false;
@@ -277,17 +288,17 @@ async function tryOpenPosition(db: Db, input: {
     candidateId: input.candidateRow.id,
     status: "OPEN",
     shadow: isShadow ? 1 : 0,
-    entryPrice: input.priceAtScan,
+    entryPrice: simulatedEntryPrice,
     entryAt: input.now.toISOString(),
     shares: plan.shares,
     initialStopPrice: plan.initialStopPrice,
     stopPrice: plan.initialStopPrice,
-    highWaterMark: input.priceAtScan,
+    highWaterMark: simulatedEntryPrice,
     trailingActivated: 0,
     updatedAt: input.now.toISOString(),
   }).returning();
 
-  await db.insert(schema.positionEvents).values({ positionId: openedPosition.id, at: input.now.toISOString(), type: "OPENED", price: input.priceAtScan, detail: `Decision ${input.candidateRow.id}: score ${input.candidateRow.score.toFixed(1)}, regime ${input.weather.classification}.` });
+  await db.insert(schema.positionEvents).values({ positionId: openedPosition.id, at: input.now.toISOString(), type: "OPENED", price: simulatedEntryPrice, detail: `Decision ${input.candidateRow.id}: score ${input.candidateRow.score.toFixed(1)}, regime ${input.weather.classification}. Observed $${input.priceAtScan.toFixed(4)}; conservative spread/slippage assumption applied.` });
 
   return true;
 }
@@ -314,7 +325,8 @@ async function manageOpenPosition(db: Db, position: typeof schema.positions.$inf
     return null;
   }
 
-  const exitPrice = hitStop ? staged.stopPrice : currentPrice;
+  const observedExit = hitStop ? staged.stopPrice : currentPrice;
+  const exitPrice = executionPrice(observedExit, "SELL", isCryptoTicker(position.ticker));
   const realizedPnl = (exitPrice - position.entryPrice) * position.shares;
   const exitReason = forceClose && !hitStop ? "MARKET_CLOSE" : staged.trailingActivated ? "TRAILING_STOP" : "STOP_LOSS";
   const returnPct = ((exitPrice - position.entryPrice) / position.entryPrice) * 100;

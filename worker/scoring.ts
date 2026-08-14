@@ -1,4 +1,5 @@
 import type { FinnhubQuote } from "./finnhub";
+import { washSaleBlockedUntil } from "./wash-sale.ts";
 
 // Deterministic, rules-based scoring only. Every signal here comes from a real,
 // verifiable field (headline text, a live quote, elapsed time) — nothing is inferred
@@ -104,6 +105,8 @@ function disqualified(reason: string, signals: SignalScore[] = []): ScoreResult 
 }
 
 export function scoreCandidate(input: {
+  ticker?: string;
+  now?: Date;
   headline: string;
   summary: string;
   priceAtScan: number | null;
@@ -111,6 +114,10 @@ export function scoreCandidate(input: {
   minutesSincePublished: number;
   seenQualifyingLastScan: boolean;
 }): ScoreResult {
+  const blockedUntil = input.ticker && input.now ? washSaleBlockedUntil(input.ticker, input.now) : null;
+  if (blockedUntil) {
+    return disqualified(`Wash-sale guard: ${input.ticker} cannot re-enter before ${blockedUntil}. Observation retained; no trade allowed.`);
+  }
   const catalyst = classifyCatalyst(input.headline, input.summary);
   const LIQUIDITY_NOTE = "Spread and volume can't be verified on the free data tier.";
 
@@ -152,15 +159,38 @@ export function scoreCandidate(input: {
   return { score, status: "DISQUALIFIED", reason: `Score too low (${score.toFixed(0)}/100) — no clear, fresh, price-confirmed catalyst.`, signals, analystScore, skepticPenalty };
 }
 
-export type WeatherResult = { classification: "TRADE_ELIGIBLE" | "CAUTION" | "SIT_OUT"; flags: string[] };
+export type WeatherResult = { classification: "TRADE_ELIGIBLE" | "CAUTION" | "SIT_OUT"; flags: string[]; negativeFlags: number; completenessPct: number };
+export type WeatherInputs = {
+  spy: FinnhubQuote | null; qqq: FinnhubQuote | null; spyVwap: number | null;
+  advancers: number; decliners: number; breadthSample: number;
+  volatilityProxy: FinnhubQuote | null;
+};
 
-export function classifyMarketWeather(spy: FinnhubQuote | null, qqq: FinnhubQuote | null): WeatherResult {
-  const flags = ["Breadth, VWAP and volatility aren't available on the free data tier — this reads index direction only."];
-  if (!spy || !qqq || spy.dp === null || qqq.dp === null) {
-    return { classification: "CAUTION", flags: [...flags, "Index quote unavailable this scan."] };
+export function classifyMarketWeather(input: WeatherInputs): WeatherResult {
+  const { spy, qqq, spyVwap, advancers, decliners, breadthSample, volatilityProxy } = input;
+  const flags: string[] = [];
+  const measurable = [spy?.dp, qqq?.dp, spyVwap, breadthSample >= 10 ? 1 : null, volatilityProxy?.dp].filter((v) => v !== null && v !== undefined).length;
+  const completenessPct = Math.round((measurable / 5) * 100);
+  let negativeFlags = 0;
+
+  if (spy?.dp == null) flags.push("S&P 500 direction unavailable");
+  else { flags.push(`S&P 500 ${spy.dp >= 0 ? "+" : ""}${spy.dp.toFixed(2)}%`); if (spy.dp < 0) negativeFlags++; }
+  if (qqq?.dp == null) flags.push("Nasdaq 100 direction unavailable");
+  else { flags.push(`Nasdaq 100 ${qqq.dp >= 0 ? "+" : ""}${qqq.dp.toFixed(2)}%`); if (qqq.dp < 0) negativeFlags++; }
+  if (spyVwap == null || spy == null) flags.push("SPY intraday VWAP unavailable — never estimated");
+  else { const above = spy.c >= spyVwap; flags.push(`SPY ${above ? "above" : "below"} VWAP ($${spyVwap.toFixed(2)})`); if (!above) negativeFlags++; }
+  if (breadthSample < 10) flags.push(`Tracked-universe breadth unavailable (${breadthSample}/20 quotes)`);
+  else { const ratio = advancers / breadthSample; flags.push(`Tracked breadth ${advancers} advancing / ${decliners} declining`); if (ratio < 0.45) negativeFlags++; }
+  if (volatilityProxy?.dp == null) flags.push("Volatility direction unavailable");
+  else { flags.push(`VIXY volatility proxy ${volatilityProxy.dp >= 0 ? "+" : ""}${volatilityProxy.dp.toFixed(2)}%`); if (volatilityProxy.dp > 0.5) negativeFlags++; }
+  flags.push(`Weather data completeness ${completenessPct}%`);
+  flags.push("Scheduled macro-event feed unavailable; Atlas will not infer it.");
+
+  if (negativeFlags >= 3) return { classification: "SIT_OUT", flags, negativeFlags, completenessPct };
+  if (completenessPct < 80) return { classification: "CAUTION", flags, negativeFlags, completenessPct };
+  const breadthPositive = breadthSample >= 10 && advancers / breadthSample >= 0.55;
+  if ((spy?.dp ?? 0) > 0.1 && (qqq?.dp ?? 0) > 0.1 && spyVwap !== null && spy !== null && spy.c >= spyVwap && breadthPositive && negativeFlags <= 1) {
+    return { classification: "TRADE_ELIGIBLE", flags, negativeFlags, completenessPct };
   }
-  const spyPct = spy.dp, qqqPct = qqq.dp;
-  if (spyPct > 0.1 && qqqPct > 0.1) return { classification: "TRADE_ELIGIBLE", flags: [...flags, `S&P 500 +${spyPct.toFixed(2)}%`, `Nasdaq 100 +${qqqPct.toFixed(2)}%`] };
-  if (spyPct < -0.5 && qqqPct < -0.5) return { classification: "SIT_OUT", flags: [...flags, `S&P 500 ${spyPct.toFixed(2)}%`, `Nasdaq 100 ${qqqPct.toFixed(2)}%`, "Broad index weakness on both benchmarks."] };
-  return { classification: "CAUTION", flags: [...flags, `S&P 500 ${spyPct.toFixed(2)}%`, `Nasdaq 100 ${qqqPct.toFixed(2)}%`, "Mixed or weak signal."] };
+  return { classification: "CAUTION", flags, negativeFlags, completenessPct };
 }
