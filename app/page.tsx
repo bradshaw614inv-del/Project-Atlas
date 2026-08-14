@@ -186,7 +186,7 @@ export default function Home() {
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
-      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, crypto assets, news, timestamps, and market quotes must be real and source-traceable. Only the paper execution and its calculated return or loss are simulated. Missing market inputs stay unavailable—never estimated, invented, or replaced.</span></section>
+      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, Robinhood-supported crypto assets, news, timestamps, and market quotes must be real and source-traceable. Crypto scanning is restricted to BTC, ETH, SOL, and XRP. Only the paper execution and its calculated return or loss are simulated.</span></section>
       <section className={`collection-health ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
 
       <section className="hero forward-hero">

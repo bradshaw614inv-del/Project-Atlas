@@ -18,4 +18,5 @@ test("crypto stories map only to named supported assets", () => {
   assert.deepEqual(cryptoTickersForStory("Digital assets gain", "No named token"), []);
   assert.equal(quoteSymbolForTicker("BTC"), "BINANCE:BTCUSDT");
   assert.equal(quoteSymbolForTicker("AAPL"), "AAPL");
+  assert.deepEqual(cryptoTickersForStory("Dogecoin surges", "DOGE gains"), []);
 });
