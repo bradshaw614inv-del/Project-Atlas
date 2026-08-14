@@ -13,6 +13,13 @@ test("$10,000 is split into five equal $2,000 slots without increasing risk", ()
   assert.equal(plan.initialStopPrice, 98.75);
 });
 
+test("cash-backed sizing never exceeds settled cash", () => {
+  const plan = computeEntryPlan(13_000, 100, 0.25, 5, 1_100);
+  assert.equal(plan.shares, 11);
+  assert.equal(plan.shares * 100, 1_100);
+  assert.equal(plan.riskDollar, 32.5);
+});
+
 test("crypto stories map only to named supported assets", () => {
   assert.deepEqual(cryptoTickersForStory("Bitcoin and Ethereum gain", "SOL is unchanged"), ["BTC", "ETH", "SOL"]);
   assert.deepEqual(cryptoTickersForStory("Digital assets gain", "No named token"), []);

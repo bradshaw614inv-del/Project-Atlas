@@ -14,9 +14,9 @@ export const DAILY_LOSS_LIMIT_PCT = 1;
 export const COOLDOWN_MINUTES = 30;
 export const TRAILING_DISTANCE_PCT = 1.5;
 
-export function computeEntryPlan(startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number) {
+export function computeEntryPlan(startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number, availableCash = startingCapital) {
   const riskDollar = (startingCapital * riskPerTradePct) / 100;
-  const slotCap = (startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions;
+  const slotCap = Math.min((startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions, Math.max(0, availableCash));
   const shares = Math.max(0, slotCap / entryPrice);
   // The stop is derived from the fixed risk budget after allocating the equal
   // slot, and is never wider than the system's original 1.5% maximum.

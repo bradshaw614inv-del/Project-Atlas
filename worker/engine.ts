@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { getCompanyNews, getCryptoNews, getQuote, type FinnhubQuote } from "./finnhub";
@@ -270,9 +270,21 @@ async function tryOpenPosition(db: Db, input: {
     }
   }
 
-  const plan = computeEntryPlan(input.account.startingCapital, input.priceAtScan, input.account.riskPerTradePct, input.account.maxOpenPositions);
+  // Conservative Robinhood cash-account model: every buy is fully cash-backed,
+  // and intraday sale proceeds are not recycled into new entries. Crypto proceeds
+  // settle instantly at Robinhood, but the shared daily cap intentionally applies
+  // the stricter stock-cash rule to the mixed portfolio.
+  const equity = Math.max(0, input.account.startingCapital + input.account.realizedPnl);
+  const dayStart = `${input.clock.tradingDay}T00:00:00.000Z`;
+  const todaysPositions = await db.select().from(schema.positions).where(and(
+    eq(schema.positions.shadow, isShadow ? 1 : 0),
+    gte(schema.positions.entryAt, dayStart),
+  ));
+  const grossPurchasesToday = todaysPositions.reduce((sum, position) => sum + position.entryPrice * position.shares, 0);
+  const availableCash = Math.max(0, equity - grossPurchasesToday);
+  const plan = computeEntryPlan(equity, input.priceAtScan, input.account.riskPerTradePct, input.account.maxOpenPositions, availableCash);
   if (plan.shares <= 0) {
-    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: computed position size is zero for this account amount.");
+    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: no settled paper cash remains in today's cash-backed purchase budget.");
     return false;
   }
 

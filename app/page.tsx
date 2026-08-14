@@ -292,12 +292,16 @@ export default function Home() {
 
       <section className="safety-panel" aria-labelledby="safety-title">
         <div className="safety-heading">
-          <div><span>ENGINE RULES · PAPER SIMULATION</span><h2 id="safety-title">What Atlas will never do</h2><p>These are hard-coded in the scan engine, not preferences — there is no manual override. Account size and risk per trade are set above; allocation is fixed at five equal slots.</p></div>
+          <div><span>ENGINE RULES · ROBINHOOD CASH MODEL</span><h2 id="safety-title">What Atlas will never do</h2><p>Atlas is paper-only and models a conservative cash account. The current $13,000 balance is divided into five equal $2,600 slots; no broker is connected.</p></div>
           <strong>ROBINHOOD MODE</strong>
         </div>
         <div className="safety-grid">
           <SafetyRule value={`${DAILY_LOSS_LIMIT_PCT}%`} label="Daily circuit breaker" detail="New entries stop for the day at this loss, or after two consecutive losing trades." />
           <SafetyRule value="5 equal slots" label="Capital allocation" detail="Each qualifying asset can use one equal slot. Unused slots remain cash; Atlas never forces a trade to fill them." />
+          <SafetyRule value="100% cash" label="No margin or leverage" detail="Every simulated stock and crypto purchase must be fully backed by available paper cash. Crypto is never treated as collateral." />
+          <SafetyRule value="T+1 safe" label="No same-day stock cash reuse" detail="Atlas caps total new purchase notional to current equity each trading day, so proceeds from a stock sold today are not recycled before settlement." />
+          <SafetyRule value="Long only" label="No shorting or options" detail="Atlas only simulates buying supported stocks and crypto. It does not short, borrow shares, or trade options." />
+          <SafetyRule value="Preflight required" label="No automatic real-money launch" detail="Before any future brokerage connection, Atlas must verify live account type, buying power, restrictions, asset availability, and current Robinhood rules for every order." />
           <SafetyRule value={`${STOP_DISTANCE_PCT}%`} label="Initial stop distance" detail="Simplified fixed distance — real intraday volatility (ATR) isn't available on the free data tier." />
           <SafetyRule value={`${TRAILING_DISTANCE_PCT}%`} label="Trailing stop" detail="Activates at +3% and only ever ratchets the stop upward, never down." />
           <SafetyRule value={`${COOLDOWN_MINUTES} min`} label="Stop-out cooldown" detail="No immediate re-entry into a ticker after a loss — a genuinely new signal is required." />
