@@ -19,9 +19,17 @@ test("execution model applies conservative costs in the adverse direction", () =
   assert.ok(executionPrice(100, "BUY", true) > executionPrice(100, "BUY", false));
 });
 
+test("cash-backed sizing never exceeds settled cash", () => {
+  const plan = computeEntryPlan(13_000, 100, 0.25, 5, 1_100);
+  assert.equal(plan.shares, 11);
+  assert.equal(plan.shares * 100, 1_100);
+  assert.equal(plan.riskDollar, 32.5);
+});
+
 test("crypto stories map only to named supported assets", () => {
   assert.deepEqual(cryptoTickersForStory("Bitcoin and Ethereum gain", "SOL is unchanged"), ["BTC", "ETH", "SOL"]);
   assert.deepEqual(cryptoTickersForStory("Digital assets gain", "No named token"), []);
   assert.equal(quoteSymbolForTicker("BTC"), "BINANCE:BTCUSDT");
   assert.equal(quoteSymbolForTicker("AAPL"), "AAPL");
+  assert.deepEqual(cryptoTickersForStory("Dogecoin surges", "DOGE gains"), []);
 });

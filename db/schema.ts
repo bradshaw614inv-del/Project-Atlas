@@ -100,6 +100,15 @@ export const accountState = sqliteTable("account_state", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+// Append-only cash ledger. Contributions change buying power, never trading P&L.
+export const accountTransactions = sqliteTable("account_transactions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  type: text("type").notNull(), // CONTRIBUTION
+  amount: real("amount").notNull(),
+  balanceAfter: real("balance_after").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
 // Observability for each cron execution.
 export const scanRuns = sqliteTable("scan_runs", {
   id: integer("id").primaryKey({ autoIncrement: true }),

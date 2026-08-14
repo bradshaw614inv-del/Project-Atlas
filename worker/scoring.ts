@@ -94,6 +94,11 @@ function freshnessScore(minutesSincePublished: number): number {
 }
 
 export const TRADE_THRESHOLD = 60;
+// A candidate may earn persistence on the next scan before it is trade-ready.
+// Keeping this below TRADE_THRESHOLD avoids the circular requirement where a
+// candidate had to reach 60 before it could receive the persistence points
+// needed to reach 60. This is a confirmation gate, not a trade threshold.
+export const CONFIRMATION_ELIGIBILITY_THRESHOLD = 40;
 export type SignalScore = { key: string; label: string; score: number; max: number; evidence: string };
 export type ScoreResult = {
   score: number; status: "WATCH" | "CAUTION" | "DISQUALIFIED"; reason: string;
@@ -112,7 +117,7 @@ export function scoreCandidate(input: {
   priceAtScan: number | null;
   priceChangePct: number | null;
   minutesSincePublished: number;
-  seenQualifyingLastScan: boolean;
+  seenConfirmationEligibleLastScan: boolean;
 }): ScoreResult {
   const blockedUntil = input.ticker && input.now ? washSaleBlockedUntil(input.ticker, input.now) : null;
   if (blockedUntil) {
@@ -136,22 +141,25 @@ export function scoreCandidate(input: {
 
   const moveScore = moveConfirmationScore(input.priceChangePct);
   const freshness = freshnessScore(input.minutesSincePublished);
-  const persistence = input.seenQualifyingLastScan ? 20 : 0;
+  const persistence = input.seenConfirmationEligibleLastScan ? 20 : 0;
   const signals: SignalScore[] = [
     { key: "catalyst", label: "Catalyst quality", score: catalyst.weight, max: 35, evidence: catalyst.label },
     { key: "price_confirmation", label: "Price confirmation", score: moveScore, max: 25, evidence: input.priceChangePct === null ? "Quote change unavailable" : `${input.priceChangePct.toFixed(2)}% from first observation` },
     { key: "freshness", label: "News freshness", score: freshness, max: 20, evidence: `${Math.max(0, input.minutesSincePublished).toFixed(0)} minutes old` },
-    { key: "persistence", label: "Independent rescan confirmation", score: persistence, max: 20, evidence: input.seenQualifyingLastScan ? "Confirmed on consecutive scan" : "Awaiting consecutive scan" },
+    { key: "persistence", label: "Independent rescan confirmation", score: persistence, max: 20, evidence: input.seenConfirmationEligibleLastScan ? "Confirmed on consecutive scan" : "Awaiting consecutive scan" },
   ];
   const analystScore = signals.reduce((sum, signal) => sum + signal.score, 0);
   const skepticPenalty = input.priceChangePct === null ? 5 : input.priceChangePct > 6 ? 8 : 0;
   const score = Math.max(0, analystScore - skepticPenalty);
 
-  if (score >= 60 && input.seenQualifyingLastScan) {
+  if (score >= TRADE_THRESHOLD && input.seenConfirmationEligibleLastScan && moveScore > 0) {
     return { score, status: "WATCH", reason: `${catalyst.label}, price confirmed, seen on a second consecutive scan. ${LIQUIDITY_NOTE}`, signals, analystScore, skepticPenalty };
   }
-  if (score >= 60) {
+  if (score >= TRADE_THRESHOLD && !input.seenConfirmationEligibleLastScan) {
     return { score, status: "CAUTION", reason: `${catalyst.label} scores high but only appeared once — needs to reappear on the next 5-minute scan before Atlas will act (no first-tick chasing).`, signals, analystScore, skepticPenalty };
+  }
+  if (score >= TRADE_THRESHOLD && moveScore === 0) {
+    return { score, status: "CAUTION", reason: `${catalyst.label} persisted and reached ${score.toFixed(0)}/100, but the real quote has not confirmed a positive move. Atlas will keep observing rather than trade.`, signals, analystScore, skepticPenalty };
   }
   if (score >= 35) {
     return { score, status: "CAUTION", reason: `${catalyst.label}, but below the action threshold (${score.toFixed(0)}/100, needs ${TRADE_THRESHOLD}). Tracking.`, signals, analystScore, skepticPenalty };

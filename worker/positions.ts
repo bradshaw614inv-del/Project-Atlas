@@ -21,9 +21,9 @@ export function executionPrice(observedPrice: number, side: "BUY" | "SELL", isCr
   return side === "BUY" ? observedPrice * (1 + halfCost) : observedPrice * (1 - halfCost);
 }
 
-export function computeEntryPlan(startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number) {
+export function computeEntryPlan(startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number, availableCash = startingCapital) {
   const riskDollar = (startingCapital * riskPerTradePct) / 100;
-  const slotCap = (startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions;
+  const slotCap = Math.min((startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions, Math.max(0, availableCash));
   const shares = Math.max(0, slotCap / entryPrice);
   // The stop is derived from the fixed risk budget after allocating the equal
   // slot, and is never wider than the system's original 1.5% maximum.

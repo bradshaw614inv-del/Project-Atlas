@@ -1,10 +1,10 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { candleVwap, getCandles, getCompanyNews, getCryptoNews, getQuote, type FinnhubQuote } from "./finnhub";
 import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
-import { classifyMarketWeather, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
+import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -126,10 +126,15 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
       const baseline = priorCandidates[0]?.priceAtScan ?? priceAtScan;
       const priceChangePct = priceAtScan !== null && baseline ? ((priceAtScan - baseline) / baseline) * 100 : null;
       const lastCandidate = priorCandidates.at(-1);
-      const seenQualifyingLastScan = !!lastCandidate && lastCandidate.score >= TRADE_THRESHOLD && lastCandidate.status !== "DISQUALIFIED";
+      // A promising first observation may earn persistence on the next scan.
+      // Requiring the prior observation to have already reached the 60-point
+      // trade threshold made persistence circular and prevented valid trades.
+      const seenConfirmationEligibleLastScan = !!lastCandidate
+        && lastCandidate.score >= CONFIRMATION_ELIGIBILITY_THRESHOLD
+        && lastCandidate.status !== "DISQUALIFIED";
       const minutesSincePublished = (now.getTime() - new Date(story.publishedAt).getTime()) / 60000;
 
-      const result = scoreCandidate({ ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct, minutesSincePublished, seenQualifyingLastScan });
+      const result = scoreCandidate({ ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct, minutesSincePublished, seenConfirmationEligibleLastScan });
 
       const [candidateRow] = await db.insert(schema.candidates).values({
         storyId: story.id,
@@ -275,10 +280,22 @@ async function tryOpenPosition(db: Db, input: {
     }
   }
 
+  // Conservative Robinhood cash-account model: every buy is fully cash-backed,
+  // and intraday sale proceeds are not recycled into new entries. Crypto proceeds
+  // settle instantly at Robinhood, but the shared daily cap intentionally applies
+  // the stricter stock-cash rule to the mixed portfolio.
+  const equity = Math.max(0, input.account.startingCapital + input.account.realizedPnl);
+  const dayStart = `${input.clock.tradingDay}T00:00:00.000Z`;
+  const todaysPositions = await db.select().from(schema.positions).where(and(
+    eq(schema.positions.shadow, isShadow ? 1 : 0),
+    gte(schema.positions.entryAt, dayStart),
+  ));
+  const grossPurchasesToday = todaysPositions.reduce((sum, position) => sum + position.entryPrice * position.shares, 0);
+  const availableCash = Math.max(0, equity - grossPurchasesToday);
   const simulatedEntryPrice = executionPrice(input.priceAtScan, "BUY", isCryptoTicker(input.ticker));
-  const plan = computeEntryPlan(input.account.startingCapital, simulatedEntryPrice, input.account.riskPerTradePct, input.account.maxOpenPositions);
+  const plan = computeEntryPlan(equity, simulatedEntryPrice, input.account.riskPerTradePct, input.account.maxOpenPositions, availableCash);
   if (plan.shares <= 0) {
-    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: computed position size is zero for this account amount.");
+    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: no settled paper cash remains in today's cash-backed purchase budget.");
     return false;
   }
 

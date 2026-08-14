@@ -9,7 +9,9 @@ export const TICKER_UNIVERSE = [
   "JPM", "BAC", "XOM", "CVX", "PLTR", "CRM", "AVGO", "LMT", "BA", "DIS", "WMT",
 ];
 
-export const CRYPTO_UNIVERSE = [
+// Explicit Robinhood-tradable allowlist. General crypto news may mention any
+// asset, but Atlas only creates candidates for assets listed here.
+export const ROBINHOOD_CRYPTO_UNIVERSE = [
   { ticker: "BTC", quoteSymbol: "BINANCE:BTCUSDT", aliases: ["bitcoin", "btc"] },
   { ticker: "ETH", quoteSymbol: "BINANCE:ETHUSDT", aliases: ["ethereum", "ether", "eth"] },
   { ticker: "SOL", quoteSymbol: "BINANCE:SOLUSDT", aliases: ["solana", "sol"] },
@@ -17,16 +19,16 @@ export const CRYPTO_UNIVERSE = [
 ] as const;
 
 export function quoteSymbolForTicker(ticker: string) {
-  return CRYPTO_UNIVERSE.find((asset) => asset.ticker === ticker)?.quoteSymbol ?? ticker;
+  return ROBINHOOD_CRYPTO_UNIVERSE.find((asset) => asset.ticker === ticker)?.quoteSymbol ?? ticker;
 }
 
 export function cryptoTickersForStory(headline: string, summary: string) {
   const text = `${headline} ${summary}`.toLowerCase();
-  return CRYPTO_UNIVERSE
+  return ROBINHOOD_CRYPTO_UNIVERSE
     .filter((asset) => asset.aliases.some((alias) => new RegExp(`(^|[^a-z0-9])${alias}([^a-z0-9]|$)`, "i").test(text)))
     .map((asset) => asset.ticker);
 }
 
 export function isCryptoTicker(ticker: string) {
-  return CRYPTO_UNIVERSE.some((asset) => asset.ticker === ticker);
+  return ROBINHOOD_CRYPTO_UNIVERSE.some((asset) => asset.ticker === ticker);
 }

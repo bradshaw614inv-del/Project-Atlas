@@ -9,6 +9,11 @@ import {
 const STATE_POLL_MS = 15000;
 const CANDIDATES_POLL_MS = 30000;
 const MIN_VALIDATED_SAMPLE = 100;
+const CRYPTO_TICKERS = new Set(["BTC", "ETH", "SOL", "XRP"]);
+
+function assetClass(ticker: string) {
+  return CRYPTO_TICKERS.has(ticker) ? `crypto crypto-${ticker.toLowerCase()}` : "stock";
+}
 
 type Account = {
   startingCapital: number; maxOpenPositions: number; riskPerTradePct: number;
@@ -18,6 +23,7 @@ type Account = {
 type Weather = { classification: "TRADE_ELIGIBLE" | "CAUTION" | "SIT_OUT"; flags: string[]; spyPrice: number | null; spyChangePct: number | null; qqqChangePct: number | null; scanAt: string };
 type ScanRun = { startedAt: string; finishedAt: string | null; storiesFetched: number; candidatesEvaluated: number; positionsOpened: number; positionsClosed: number; error: string | null };
 type CollectionHealth = { healthy: boolean; totalRecentStories: number; totalRecentCandidates: number; recentScans: ScanRun[] };
+type AccountTransaction = { id: number; type: "CONTRIBUTION"; amount: number; balanceAfter: number; createdAt: string };
 type Position = {
   id: number; ticker: string; status: "OPEN" | "CLOSED"; shadow: number; entryPrice: number; entryAt: string;
   shares: number; stopPrice: number; highWaterMark: number; trailingActivated: number;
@@ -60,21 +66,23 @@ export default function Home() {
   const [closedPositions, setClosedPositions] = useState<Position[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
-  const [capitalDraft, setCapitalDraft] = useState("");
+  const [fundsDraft, setFundsDraft] = useState("");
   const [riskPctDraft, setRiskPctDraft] = useState("");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [addingFunds, setAddingFunds] = useState(false);
+  const [recentTransactions, setRecentTransactions] = useState<AccountTransaction[]>([]);
   const [scanning, setScanning] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
 
   async function refreshState() {
-    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth }>("/api/state");
+    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth; recentTransactions: AccountTransaction[] }>("/api/state");
     setAccount(data.account);
     setWeather(data.weather);
     setLastScan(data.lastScan);
     setCollectionHealth(data.collectionHealth);
+    setRecentTransactions(data.recentTransactions ?? []);
     if (data.account && !settingsLoaded) {
-      setCapitalDraft(String(data.account.startingCapital));
       setRiskPctDraft(String(data.account.riskPerTradePct));
       setSettingsLoaded(true);
     }
@@ -119,16 +127,26 @@ export default function Home() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [openPositions.map((p) => p.ticker).join(",")]);
 
-  async function saveSettings(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const startingCapital = Number(capitalDraft);
+  async function saveSettings() {
     const riskPerTradePct = Number(riskPctDraft);
-    if (!Number.isFinite(startingCapital) || startingCapital <= 0) return;
     if (!Number.isFinite(riskPerTradePct) || riskPerTradePct <= 0) return;
     setSavingSettings(true);
-    await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ startingCapital, riskPerTradePct }) });
+    await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ riskPerTradePct }) });
     await refreshState();
     setSavingSettings(false);
+  }
+
+  async function addFunds(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const amount = Number(fundsDraft);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    setAddingFunds(true);
+    const response = await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ADD_FUNDS", amount }) });
+    if (response.ok) {
+      setFundsDraft("");
+      await refreshState();
+    }
+    setAddingFunds(false);
   }
 
   async function runScanNow() {
@@ -152,8 +170,10 @@ export default function Home() {
   }, 0);
   const portfolioValue = account ? account.startingCapital + account.realizedPnl + unrealizedPnl : null;
 
-  const activeCandidates = candidates.filter((c) => c.status !== "DISQUALIFIED");
-  const rejectedCandidates = candidates.filter((c) => c.status === "DISQUALIFIED");
+  const highestScoreFirst = (a: Candidate, b: Candidate) =>
+    b.score - a.score || new Date(b.scanAt).getTime() - new Date(a.scanAt).getTime();
+  const activeCandidates = candidates.filter((c) => c.status !== "DISQUALIFIED").sort(highestScoreFirst);
+  const rejectedCandidates = candidates.filter((c) => c.status === "DISQUALIFIED").sort(highestScoreFirst);
 
   const maxOpenPositions = account?.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS;
   const riskPerTradePct = account?.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT;
@@ -166,7 +186,7 @@ export default function Home() {
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
-      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, crypto assets, news, timestamps, and market quotes must be real and source-traceable. Only the paper execution and its calculated return or loss are simulated. Missing market inputs stay unavailable—never estimated, invented, or replaced.</span></section>
+      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, Robinhood-supported crypto assets, news, timestamps, and market quotes must be real and source-traceable. Crypto scanning is restricted to BTC, ETH, SOL, and XRP. Only the paper execution and its calculated return or loss are simulated.</span></section>
       <section className={`collection-health ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
 
       <section className="hero forward-hero">
@@ -191,17 +211,18 @@ export default function Home() {
       </section>
 
       <section className="account-strip settings-strip">
-        <form className="capital-control" onSubmit={saveSettings}>
-          <label htmlFor="account-amount">MODEL ACCOUNT AMOUNT</label>
-          <span className="money-input"><i>$</i><input id="account-amount" inputMode="decimal" type="number" min="1" step="1" value={capitalDraft} onChange={(e) => setCapitalDraft(e.target.value)} /></span>
+        <form className="capital-control" onSubmit={addFunds}>
+          <label htmlFor="account-amount">ADD PAPER CASH</label>
+          <span className="money-input"><i>$</i><input id="account-amount" aria-label="Amount of paper cash to add" inputMode="decimal" type="number" min="1" step="1" placeholder="Amount" value={fundsDraft} onChange={(e) => setFundsDraft(e.target.value)} /></span>
+          <button type="submit" className="live-btn" disabled={addingFunds}>{addingFunds ? "ADDING…" : "ADD FUNDS"}</button>
           <div className="settings-row">
             <label>Allocation slots<input type="number" value={DEFAULT_MAX_OPEN_POSITIONS} disabled /></label>
             <label>Risk per trade %<input type="number" min="0.05" max="5" step="0.05" value={riskPctDraft} onChange={(e) => setRiskPctDraft(e.target.value)} /></label>
-            <button type="submit" className="live-btn" disabled={savingSettings}>{savingSettings ? "SAVING…" : "SAVE SETTINGS"}</button>
+            <button type="button" className="live-btn" onClick={saveSettings} disabled={savingSettings}>{savingSettings ? "SAVING…" : "SAVE SETTINGS"}</button>
           </div>
-          <small>{account ? `${maxOpenPositions} equal slots of ${money(account.startingCapital / maxOpenPositions, 0)} · unused slots remain cash` : ""}</small>
+          <small>{account ? `${money(account.startingCapital, 0)} contributed · ${maxOpenPositions} equal slots of ${money(account.startingCapital / maxOpenPositions, 0)} · unused slots remain cash${recentTransactions[0] ? ` · last added ${money(recentTransactions[0].amount, 0)}` : ""}` : ""}</small>
         </form>
-        <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Starting cash + realized and open-position P&amp;L</small></div>
+        <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Contributed cash + closed P&amp;L + live open-position P&amp;L</small></div>
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
         <div><span>TODAY'S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
         <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
@@ -213,7 +234,7 @@ export default function Home() {
           const live = livePrices[p.ticker];
           const unrealized = live ? (live - p.entryPrice) * p.shares : null;
           return <article className="event-card" key={p.id}>
-            <div className="event-top"><div><span className="category">{p.shadow ? "SHADOW (SIT-OUT DAY)" : "LIVE SIMULATION"}</span><strong>{p.ticker}</strong></div><time>{displayDate(p.entryAt)}</time></div>
+            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? "CRYPTO" : p.shadow ? "SHADOW (SIT-OUT DAY)" : "STOCK"}</span><strong>{p.ticker}</strong></div><time>{displayDate(p.entryAt)}</time></div>
             <h3>{p.headline || "—"}</h3>
             <div className="event-numbers">
               <div><span>ENTRY</span><b>{money(p.entryPrice)}</b></div>
@@ -232,7 +253,7 @@ export default function Home() {
         <div className="tracker-head"><div><span>TRADE HISTORY</span><h2>Closed positions</h2><p>Every closed trade, win or loss — nothing is hidden or removed.</p></div></div>
         {closedPositions.length === 0 ? <div className="empty"><p>No closed trades yet.</p></div> : <div className="event-grid">{closedPositions.map((p) => (
           <article className="event-card" key={p.id}>
-            <div className="event-top"><div><span className="category">{p.shadow ? "SHADOW" : p.exitReason}</span><strong>{p.ticker}</strong></div><time>{p.exitAt ? displayDate(p.exitAt) : ""}</time></div>
+            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? `CRYPTO · ${p.shadow ? "SHADOW" : p.exitReason}` : p.shadow ? "SHADOW" : p.exitReason}</span><strong>{p.ticker}</strong></div><time>{p.exitAt ? displayDate(p.exitAt) : ""}</time></div>
             <h3>{p.headline || "—"}</h3>
             <div className="event-numbers">
               <div><span>ENTRY → EXIT</span><b>{money(p.entryPrice)} → {p.exitPrice ? money(p.exitPrice) : "—"}</b></div>
@@ -244,14 +265,14 @@ export default function Home() {
       </section>
 
       <section className="watchlist-panel">
-        <div className="watchlist-head"><div><span>LIVE SCORING FEED</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
+        <div className="watchlist-head"><div><span>LIVE SCORING FEED · HIGHEST SCORE FIRST</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
 
         {activeCandidates.length === 0 ? <p className="watchlist-empty">Nothing is currently worth watching. Atlas doesn't force trades — no qualifying story means no trade.</p> : <div className="candidate-list">{activeCandidates.map((c) => (
           <CandidateRow key={c.id} c={c} />
         ))}</div>}
 
         {rejectedCandidates.length > 0 && <section className="evidence-stream" aria-labelledby="evidence-stream-title">
-          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Latest real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
+          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Highest-scoring real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
           <p>These real stories were evaluated and rejected. A rejection is useful evidence—not inactivity—and never creates a paper trade.</p>
           <div className="candidate-list">{rejectedCandidates.slice(0, 30).map((c) => <CandidateRow key={c.id} c={c} />)}</div>
         </section>}
@@ -266,7 +287,7 @@ export default function Home() {
           <article><span>KNOWLEDGE GRAPH</span><strong>{insights ? `${insights.knowledgeGraph.nodes.length} nodes` : "—"}</strong><small>Ticker, catalyst, and market-regime relationships</small></article>
         </div>
         <div className="calibration-bands">{insights?.bands.map((band) => <div key={band.band}><b>{band.band}</b><span>{band.count} observations</span><small>{band.winRate !== null ? `${Math.round(band.winRate * 100)}% observed wins / ${band.closed} closed` : `${band.closed}/30 closed outcomes collected`}</small></div>)}</div>
-        <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
+        <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div className={assetClass(point.ticker)} key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
       </section>
 
       <section className="readiness-panel" aria-labelledby="readiness-title">
@@ -277,12 +298,16 @@ export default function Home() {
 
       <section className="safety-panel" aria-labelledby="safety-title">
         <div className="safety-heading">
-          <div><span>ENGINE RULES · PAPER SIMULATION</span><h2 id="safety-title">What Atlas will never do</h2><p>These are hard-coded in the scan engine, not preferences — there is no manual override. Account size and risk per trade are set above; allocation is fixed at five equal slots.</p></div>
+          <div><span>ENGINE RULES · ROBINHOOD CASH MODEL</span><h2 id="safety-title">What Atlas will never do</h2><p>Atlas is paper-only and models a conservative cash account. The current $13,000 balance is divided into five equal $2,600 slots; no broker is connected.</p></div>
           <strong>ROBINHOOD MODE</strong>
         </div>
         <div className="safety-grid">
           <SafetyRule value={`${DAILY_LOSS_LIMIT_PCT}%`} label="Daily circuit breaker" detail="New entries stop for the day at this loss, or after two consecutive losing trades." />
           <SafetyRule value="5 equal slots" label="Capital allocation" detail="Each qualifying asset can use one equal slot. Unused slots remain cash; Atlas never forces a trade to fill them." />
+          <SafetyRule value="100% cash" label="No margin or leverage" detail="Every simulated stock and crypto purchase must be fully backed by available paper cash. Crypto is never treated as collateral." />
+          <SafetyRule value="T+1 safe" label="No same-day stock cash reuse" detail="Atlas caps total new purchase notional to current equity each trading day, so proceeds from a stock sold today are not recycled before settlement." />
+          <SafetyRule value="Long only" label="No shorting or options" detail="Atlas only simulates buying supported stocks and crypto. It does not short, borrow shares, or trade options." />
+          <SafetyRule value="Preflight required" label="No automatic real-money launch" detail="Before any future brokerage connection, Atlas must verify live account type, buying power, restrictions, asset availability, and current Robinhood rules for every order." />
           <SafetyRule value={`${STOP_DISTANCE_PCT}%`} label="Initial stop distance" detail="Simplified fixed distance — real intraday volatility (ATR) isn't available on the free data tier." />
           <SafetyRule value={`${TRAILING_DISTANCE_PCT}%`} label="Trailing stop" detail="Activates at +3% and only ever ratchets the stop upward, never down." />
           <SafetyRule value={`${COOLDOWN_MINUTES} min`} label="Stop-out cooldown" detail="No immediate re-entry into a ticker after a loss — a genuinely new signal is required." />
@@ -299,10 +324,10 @@ export default function Home() {
 }
 
 function CandidateRow({ c }: { c: Candidate }) {
-  return <article className={`candidate-row status-${c.status.toLowerCase()}`}>
+  return <article className={`candidate-row status-${c.status.toLowerCase()} ${assetClass(c.ticker)}`}>
     <div className="candidate-badge">{c.status}</div>
     <div className="candidate-main">
-      <div className="candidate-top"><strong>{c.ticker}</strong><span>{c.score.toFixed(0)}/100</span><time>{timeAgo(c.scanAt)}</time></div>
+      <div className="candidate-top"><strong>{c.ticker}</strong>{CRYPTO_TICKERS.has(c.ticker) && <em>CRYPTO</em>}<span>{c.score.toFixed(0)}/100</span><time>{timeAgo(c.scanAt)}</time></div>
       <p className="candidate-headline">{c.headline}{c.source && <span className="candidate-source"> — {c.source}</span>}{c.sourceUrl && <a href={c.sourceUrl} target="_blank" rel="noreferrer" className="candidate-link">↗</a>}</p>
       <p className="candidate-reason">{c.reason}</p>
       {c.signals?.length > 0 && <details className="score-breakdown"><summary>Confidence breakdown · analyst {c.analystScore.toFixed(0)} − skeptic {c.skepticPenalty.toFixed(0)}</summary>{c.signals.map((signal) => <div key={signal.key}><b>{signal.label}</b><span>{signal.score.toFixed(1)}/{signal.max}</span><small>{signal.evidence}</small></div>)}</details>}
