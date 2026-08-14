@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import {
-  CASH_RESERVE_PCT, COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT,
+  COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT,
   DEFAULT_MAX_OPEN_POSITIONS, DEFAULT_RISK_PER_TRADE_PCT, STOP_DISTANCE_PCT, TRAILING_DISTANCE_PCT,
 } from "../worker/positions";
 
@@ -61,7 +61,6 @@ export default function Home() {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
   const [capitalDraft, setCapitalDraft] = useState("");
-  const [maxPositionsDraft, setMaxPositionsDraft] = useState("");
   const [riskPctDraft, setRiskPctDraft] = useState("");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -76,7 +75,6 @@ export default function Home() {
     setCollectionHealth(data.collectionHealth);
     if (data.account && !settingsLoaded) {
       setCapitalDraft(String(data.account.startingCapital));
-      setMaxPositionsDraft(String(data.account.maxOpenPositions));
       setRiskPctDraft(String(data.account.riskPerTradePct));
       setSettingsLoaded(true);
     }
@@ -124,13 +122,11 @@ export default function Home() {
   async function saveSettings(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const startingCapital = Number(capitalDraft);
-    const maxOpenPositions = Number(maxPositionsDraft);
     const riskPerTradePct = Number(riskPctDraft);
     if (!Number.isFinite(startingCapital) || startingCapital <= 0) return;
-    if (!Number.isInteger(maxOpenPositions) || maxOpenPositions < 1) return;
     if (!Number.isFinite(riskPerTradePct) || riskPerTradePct <= 0) return;
     setSavingSettings(true);
-    await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ startingCapital, maxOpenPositions, riskPerTradePct }) });
+    await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ startingCapital, riskPerTradePct }) });
     await refreshState();
     setSavingSettings(false);
   }
@@ -170,11 +166,11 @@ export default function Home() {
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
-      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, companies, news, timestamps, and market quotes must be real and source-traceable. Only the paper execution and its calculated return or loss are simulated. Missing market inputs stay unavailable—never estimated, invented, or replaced.</span></section>
+      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, crypto assets, news, timestamps, and market quotes must be real and source-traceable. Only the paper execution and its calculated return or loss are simulated. Missing market inputs stay unavailable—never estimated, invented, or replaced.</span></section>
       <section className={`collection-health ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
 
       <section className="hero forward-hero">
-        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stocks, real companies, real news, and real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
+        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "RUN A SCAN NOW"}</button>
       </section>
 
@@ -182,7 +178,7 @@ export default function Home() {
         <h2>How to read this page</h2>
         <div className="howto-grid">
           <div><b>1. Market weather</b><p>A quick read of overall conditions. Atlas only opens new trades when this isn't "Sit out."</p></div>
-          <div><b>2. Your settings</b><p>Set the model account size and how many positions / how much risk Atlas is allowed to use — this is fully in your control.</p></div>
+          <div><b>2. Allocation</b><p>The model account is divided into five equal slots. Only qualifying assets receive a slot; the rest stays cash.</p></div>
           <div><b>3. Open &amp; closed positions</b><p>Every simulated trade Atlas has made, win or loss. Nothing is hidden.</p></div>
           <div><b>4. Scoring feed</b><p>Every news story Atlas looked at. Most days most stories don't qualify — that's intentional, not a bug.</p></div>
         </div>
@@ -199,11 +195,11 @@ export default function Home() {
           <label htmlFor="account-amount">MODEL ACCOUNT AMOUNT</label>
           <span className="money-input"><i>$</i><input id="account-amount" inputMode="decimal" type="number" min="1" step="1" value={capitalDraft} onChange={(e) => setCapitalDraft(e.target.value)} /></span>
           <div className="settings-row">
-            <label>Max open positions<input type="number" min="1" max="20" step="1" value={maxPositionsDraft} onChange={(e) => setMaxPositionsDraft(e.target.value)} /></label>
+            <label>Allocation slots<input type="number" value={DEFAULT_MAX_OPEN_POSITIONS} disabled /></label>
             <label>Risk per trade %<input type="number" min="0.05" max="5" step="0.05" value={riskPctDraft} onChange={(e) => setRiskPctDraft(e.target.value)} /></label>
             <button type="submit" className="live-btn" disabled={savingSettings}>{savingSettings ? "SAVING…" : "SAVE SETTINGS"}</button>
           </div>
-          <small>{account ? `${money((account.startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions, 0)} max per position · ${money(account.startingCapital * CASH_RESERVE_PCT / 100, 0)} held back` : ""}</small>
+          <small>{account ? `${maxOpenPositions} equal slots of ${money(account.startingCapital / maxOpenPositions, 0)} · unused slots remain cash` : ""}</small>
         </form>
         <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Starting cash + realized and open-position P&amp;L</small></div>
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
@@ -275,16 +271,16 @@ export default function Home() {
 
       <section className="safety-panel" aria-labelledby="safety-title">
         <div className="safety-heading">
-          <div><span>ENGINE RULES · ROBINHOOD-MODELED</span><h2 id="safety-title">What Atlas will never do</h2><p>These are hard-coded in the scan engine, not preferences — there is no manual override. Account size, max positions, and risk per trade are set above by you.</p></div>
+          <div><span>ENGINE RULES · PAPER SIMULATION</span><h2 id="safety-title">What Atlas will never do</h2><p>These are hard-coded in the scan engine, not preferences — there is no manual override. Account size and risk per trade are set above; allocation is fixed at five equal slots.</p></div>
           <strong>ROBINHOOD MODE</strong>
         </div>
         <div className="safety-grid">
           <SafetyRule value={`${DAILY_LOSS_LIMIT_PCT}%`} label="Daily circuit breaker" detail="New entries stop for the day at this loss, or after two consecutive losing trades." />
-          <SafetyRule value={`${CASH_RESERVE_PCT}%`} label="Cash reserve" detail="Held back so no single event can expose the full account." />
+          <SafetyRule value="5 equal slots" label="Capital allocation" detail="Each qualifying asset can use one equal slot. Unused slots remain cash; Atlas never forces a trade to fill them." />
           <SafetyRule value={`${STOP_DISTANCE_PCT}%`} label="Initial stop distance" detail="Simplified fixed distance — real intraday volatility (ATR) isn't available on the free data tier." />
           <SafetyRule value={`${TRAILING_DISTANCE_PCT}%`} label="Trailing stop" detail="Activates at +3% and only ever ratchets the stop upward, never down." />
           <SafetyRule value={`${COOLDOWN_MINUTES} min`} label="Stop-out cooldown" detail="No immediate re-entry into a ticker after a loss — a genuinely new signal is required." />
-          <SafetyRule value="10:00–3:45 ET" label="Entry window" detail="No new positions in the first 30 or final 15 minutes of the trading day." />
+          <SafetyRule value="10:00–3:45 ET" label="Entry window" detail="Stock and crypto entries use the same U.S. trading-day window. No new positions in the first 30 or final 15 minutes." />
           <SafetyRule value="Flat by 3:45" label="No overnight risk" detail="Every open position force-closes before the close — Robinhood stops don't execute after hours." />
         </div>
         <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>real, dated news only</span><span>two consecutive qualifying scans</span><span>market not "Sit out"</span><span>price confirmed, not extended</span><span>no negative-sentiment keywords</span><span>no duplicate open position</span><span>no forced trade quota</span></div>

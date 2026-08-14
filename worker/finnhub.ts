@@ -32,3 +32,7 @@ export async function getQuote(apiKey: string, symbol: string): Promise<FinnhubQ
 export async function getCompanyNews(apiKey: string, symbol: string, from: string, to: string): Promise<FinnhubNewsItem[]> {
   return finnhubGet<FinnhubNewsItem[]>(apiKey, `/company-news?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}`);
 }
+
+export async function getCryptoNews(apiKey: string): Promise<FinnhubNewsItem[]> {
+  return finnhubGet<FinnhubNewsItem[]>(apiKey, "/news?category=crypto");
+}

@@ -1,3 +1,5 @@
+import { quoteSymbolForTicker } from "../../../worker/universe";
+
 const TICKER_PATTERN = /^[A-Z.\-]{1,10}$/;
 
 export async function GET(request: Request) {
@@ -14,7 +16,7 @@ export async function GET(request: Request) {
     return Response.json({ error: "Invalid ticker symbol." }, { status: 400 });
   }
 
-  const finnhubUrl = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${apiKey}`;
+  const finnhubUrl = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(quoteSymbolForTicker(symbol))}&token=${apiKey}`;
   const response = await fetch(finnhubUrl);
   if (!response.ok) {
     return Response.json({ error: `Finnhub request failed (${response.status}).` }, { status: 502 });

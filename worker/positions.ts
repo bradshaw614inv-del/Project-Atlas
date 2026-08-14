@@ -4,23 +4,25 @@
 // single all-or-nothing exit. No discretionary override exists anywhere in this file —
 // that's the point: remove the moments where fear or excitement would normally decide.
 
-// Defaults only — maxOpenPositions and riskPerTradePct are user-adjustable and read
-// from account_state at runtime. Everything else below is a fixed system rule.
+// Atlas uses five equal capital slots. The account can fill fewer than five when
+// evidence is weak; an unused slot remains cash and never creates a forced trade.
 export const DEFAULT_RISK_PER_TRADE_PCT = 0.25;
-export const DEFAULT_MAX_OPEN_POSITIONS = 6;
-export const STOP_DISTANCE_PCT = 1.5; // simplified fixed distance — no real intraday ATR on the free data tier
-export const CASH_RESERVE_PCT = 70;
+export const DEFAULT_MAX_OPEN_POSITIONS = 5;
+export const STOP_DISTANCE_PCT = 1.5; // maximum initial stop distance
+export const CASH_RESERVE_PCT = 0;
 export const DAILY_LOSS_LIMIT_PCT = 1;
 export const COOLDOWN_MINUTES = 30;
 export const TRAILING_DISTANCE_PCT = 1.5;
 
 export function computeEntryPlan(startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number) {
   const riskDollar = (startingCapital * riskPerTradePct) / 100;
-  const stopDistance = entryPrice * (STOP_DISTANCE_PCT / 100);
-  const riskBasedShares = riskDollar / stopDistance;
   const slotCap = (startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions;
-  const cashBasedShares = slotCap / entryPrice;
-  const shares = Math.max(0, Math.min(riskBasedShares, cashBasedShares));
+  const shares = Math.max(0, slotCap / entryPrice);
+  // The stop is derived from the fixed risk budget after allocating the equal
+  // slot, and is never wider than the system's original 1.5% maximum.
+  const stopDistance = shares > 0
+    ? Math.min(riskDollar / shares, entryPrice * (STOP_DISTANCE_PCT / 100))
+    : 0;
   return {
     shares,
     initialStopPrice: entryPrice - stopDistance,

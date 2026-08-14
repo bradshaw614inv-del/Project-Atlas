@@ -1,11 +1,11 @@
 import { and, desc, eq } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
-import { getCompanyNews, getQuote, type FinnhubQuote } from "./finnhub";
+import { getCompanyNews, getCryptoNews, getQuote, type FinnhubQuote } from "./finnhub";
 import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
-import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, computeEntryPlan, manageStagedStop } from "./positions";
+import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, manageStagedStop } from "./positions";
 import { classifyMarketWeather, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
-import { TICKER_UNIVERSE } from "./universe";
+import { TICKER_UNIVERSE, cryptoTickersForStory, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -75,10 +75,32 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
       }
     }
 
+    const cryptoItems = await getCryptoNews(apiKey).catch(() => []);
+    for (const item of cryptoItems.slice(0, 50)) {
+      const publishedAt = new Date(item.datetime * 1000);
+      const ageMinutes = (now.getTime() - publishedAt.getTime()) / 60000;
+      const matchedTickers = cryptoTickersForStory(item.headline, item.summary || "");
+      if (matchedTickers.length === 0) continue;
+      const existing = await db.select().from(schema.newsStories).where(eq(schema.newsStories.finnhubId, String(item.id))).limit(1);
+      let story = existing[0];
+      if (!story) {
+        const [inserted] = await db.insert(schema.newsStories).values({
+          finnhubId: String(item.id), headline: item.headline, summary: item.summary || "",
+          source: item.source || "", url: item.url || "", publishedAt: publishedAt.toISOString(),
+          relatedTickers: matchedTickers.join(","), finnhubCategory: item.category || "crypto", firstSeenAt: startedAt,
+        }).returning();
+        story = inserted;
+        storiesFetched++;
+      }
+      if (ageMinutes <= LOOKBACK_MINUTES) {
+        for (const ticker of matchedTickers) pairs.push({ ticker, story });
+      }
+    }
+
     const uniqueTickers = Array.from(new Set(pairs.map((p) => p.ticker))).slice(0, MAX_CANDIDATE_TICKERS);
     const quoteMap = new Map<string, FinnhubQuote | null>();
     for (const ticker of uniqueTickers) {
-      quoteMap.set(ticker, await getQuote(apiKey, ticker).catch(() => null));
+      quoteMap.set(ticker, await getQuote(apiKey, quoteSymbolForTicker(ticker)).catch(() => null));
     }
 
     let currentAccount = account;
@@ -131,7 +153,7 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
 
     const openPositions = await db.select().from(schema.positions).where(eq(schema.positions.status, "OPEN"));
     for (const position of openPositions) {
-      const quote = quoteMap.get(position.ticker) ?? await getQuote(apiKey, position.ticker).catch(() => null);
+      const quote = quoteMap.get(position.ticker) ?? await getQuote(apiKey, quoteSymbolForTicker(position.ticker)).catch(() => null);
       if (!quote) continue;
       const closed = await manageOpenPosition(db, position, quote.c, now, clock);
       if (closed) {
@@ -186,9 +208,12 @@ async function getOrCreateAccountState(db: Db, tradingDay: string) {
     return created;
   }
   const account = rows[0];
-  if (account.tradingDay !== tradingDay) {
+  if (account.tradingDay !== tradingDay || account.maxOpenPositions !== DEFAULT_MAX_OPEN_POSITIONS) {
     const [updated] = await db.update(schema.accountState).set({
-      tradingDay, dailyRealizedPnl: 0, dailyLossShutdown: 0, consecutiveLosses: 0, updatedAt: new Date().toISOString(),
+      tradingDay,
+      maxOpenPositions: DEFAULT_MAX_OPEN_POSITIONS,
+      ...(account.tradingDay !== tradingDay ? { dailyRealizedPnl: 0, dailyLossShutdown: 0, consecutiveLosses: 0 } : {}),
+      updatedAt: new Date().toISOString(),
     }).where(eq(schema.accountState.id, 1)).returning();
     return updated;
   }
