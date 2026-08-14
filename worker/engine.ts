@@ -4,7 +4,7 @@ import * as schema from "../db/schema";
 import { getCompanyNews, getCryptoNews, getQuote, type FinnhubQuote } from "./finnhub";
 import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, manageStagedStop } from "./positions";
-import { classifyMarketWeather, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
+import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { TICKER_UNIVERSE, cryptoTickersForStory, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -116,10 +116,15 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
       const baseline = priorCandidates[0]?.priceAtScan ?? priceAtScan;
       const priceChangePct = priceAtScan !== null && baseline ? ((priceAtScan - baseline) / baseline) * 100 : null;
       const lastCandidate = priorCandidates.at(-1);
-      const seenQualifyingLastScan = !!lastCandidate && lastCandidate.score >= TRADE_THRESHOLD && lastCandidate.status !== "DISQUALIFIED";
+      // A promising first observation may earn persistence on the next scan.
+      // Requiring the prior observation to have already reached the 60-point
+      // trade threshold made persistence circular and prevented valid trades.
+      const seenConfirmationEligibleLastScan = !!lastCandidate
+        && lastCandidate.score >= CONFIRMATION_ELIGIBILITY_THRESHOLD
+        && lastCandidate.status !== "DISQUALIFIED";
       const minutesSincePublished = (now.getTime() - new Date(story.publishedAt).getTime()) / 60000;
 
-      const result = scoreCandidate({ headline: story.headline, summary: story.summary, priceAtScan, priceChangePct, minutesSincePublished, seenQualifyingLastScan });
+      const result = scoreCandidate({ headline: story.headline, summary: story.summary, priceAtScan, priceChangePct, minutesSincePublished, seenConfirmationEligibleLastScan });
 
       const [candidateRow] = await db.insert(schema.candidates).values({
         storyId: story.id,

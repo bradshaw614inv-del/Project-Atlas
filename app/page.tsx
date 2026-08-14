@@ -18,6 +18,7 @@ type Account = {
 type Weather = { classification: "TRADE_ELIGIBLE" | "CAUTION" | "SIT_OUT"; flags: string[]; spyPrice: number | null; spyChangePct: number | null; qqqChangePct: number | null; scanAt: string };
 type ScanRun = { startedAt: string; finishedAt: string | null; storiesFetched: number; candidatesEvaluated: number; positionsOpened: number; positionsClosed: number; error: string | null };
 type CollectionHealth = { healthy: boolean; totalRecentStories: number; totalRecentCandidates: number; recentScans: ScanRun[] };
+type AccountTransaction = { id: number; type: "CONTRIBUTION"; amount: number; balanceAfter: number; createdAt: string };
 type Position = {
   id: number; ticker: string; status: "OPEN" | "CLOSED"; shadow: number; entryPrice: number; entryAt: string;
   shares: number; stopPrice: number; highWaterMark: number; trailingActivated: number;
@@ -60,21 +61,23 @@ export default function Home() {
   const [closedPositions, setClosedPositions] = useState<Position[]>([]);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
-  const [capitalDraft, setCapitalDraft] = useState("");
+  const [fundsDraft, setFundsDraft] = useState("");
   const [riskPctDraft, setRiskPctDraft] = useState("");
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
+  const [addingFunds, setAddingFunds] = useState(false);
+  const [recentTransactions, setRecentTransactions] = useState<AccountTransaction[]>([]);
   const [scanning, setScanning] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
 
   async function refreshState() {
-    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth }>("/api/state");
+    const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth; recentTransactions: AccountTransaction[] }>("/api/state");
     setAccount(data.account);
     setWeather(data.weather);
     setLastScan(data.lastScan);
     setCollectionHealth(data.collectionHealth);
+    setRecentTransactions(data.recentTransactions ?? []);
     if (data.account && !settingsLoaded) {
-      setCapitalDraft(String(data.account.startingCapital));
       setRiskPctDraft(String(data.account.riskPerTradePct));
       setSettingsLoaded(true);
     }
@@ -119,16 +122,26 @@ export default function Home() {
     return () => { cancelled = true; clearInterval(interval); };
   }, [openPositions.map((p) => p.ticker).join(",")]);
 
-  async function saveSettings(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const startingCapital = Number(capitalDraft);
+  async function saveSettings() {
     const riskPerTradePct = Number(riskPctDraft);
-    if (!Number.isFinite(startingCapital) || startingCapital <= 0) return;
     if (!Number.isFinite(riskPerTradePct) || riskPerTradePct <= 0) return;
     setSavingSettings(true);
-    await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ startingCapital, riskPerTradePct }) });
+    await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ riskPerTradePct }) });
     await refreshState();
     setSavingSettings(false);
+  }
+
+  async function addFunds(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const amount = Number(fundsDraft);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    setAddingFunds(true);
+    const response = await fetch("/api/state", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "ADD_FUNDS", amount }) });
+    if (response.ok) {
+      setFundsDraft("");
+      await refreshState();
+    }
+    setAddingFunds(false);
   }
 
   async function runScanNow() {
@@ -152,8 +165,10 @@ export default function Home() {
   }, 0);
   const portfolioValue = account ? account.startingCapital + account.realizedPnl + unrealizedPnl : null;
 
-  const activeCandidates = candidates.filter((c) => c.status !== "DISQUALIFIED");
-  const rejectedCandidates = candidates.filter((c) => c.status === "DISQUALIFIED");
+  const highestScoreFirst = (a: Candidate, b: Candidate) =>
+    b.score - a.score || new Date(b.scanAt).getTime() - new Date(a.scanAt).getTime();
+  const activeCandidates = candidates.filter((c) => c.status !== "DISQUALIFIED").sort(highestScoreFirst);
+  const rejectedCandidates = candidates.filter((c) => c.status === "DISQUALIFIED").sort(highestScoreFirst);
 
   const maxOpenPositions = account?.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS;
   const riskPerTradePct = account?.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT;
@@ -191,17 +206,18 @@ export default function Home() {
       </section>
 
       <section className="account-strip settings-strip">
-        <form className="capital-control" onSubmit={saveSettings}>
-          <label htmlFor="account-amount">MODEL ACCOUNT AMOUNT</label>
-          <span className="money-input"><i>$</i><input id="account-amount" inputMode="decimal" type="number" min="1" step="1" value={capitalDraft} onChange={(e) => setCapitalDraft(e.target.value)} /></span>
+        <form className="capital-control" onSubmit={addFunds}>
+          <label htmlFor="account-amount">ADD PAPER CASH</label>
+          <span className="money-input"><i>$</i><input id="account-amount" aria-label="Amount of paper cash to add" inputMode="decimal" type="number" min="1" step="1" placeholder="Amount" value={fundsDraft} onChange={(e) => setFundsDraft(e.target.value)} /></span>
+          <button type="submit" className="live-btn" disabled={addingFunds}>{addingFunds ? "ADDING…" : "ADD FUNDS"}</button>
           <div className="settings-row">
             <label>Allocation slots<input type="number" value={DEFAULT_MAX_OPEN_POSITIONS} disabled /></label>
             <label>Risk per trade %<input type="number" min="0.05" max="5" step="0.05" value={riskPctDraft} onChange={(e) => setRiskPctDraft(e.target.value)} /></label>
-            <button type="submit" className="live-btn" disabled={savingSettings}>{savingSettings ? "SAVING…" : "SAVE SETTINGS"}</button>
+            <button type="button" className="live-btn" onClick={saveSettings} disabled={savingSettings}>{savingSettings ? "SAVING…" : "SAVE SETTINGS"}</button>
           </div>
-          <small>{account ? `${maxOpenPositions} equal slots of ${money(account.startingCapital / maxOpenPositions, 0)} · unused slots remain cash` : ""}</small>
+          <small>{account ? `${money(account.startingCapital, 0)} contributed · ${maxOpenPositions} equal slots of ${money(account.startingCapital / maxOpenPositions, 0)} · unused slots remain cash${recentTransactions[0] ? ` · last added ${money(recentTransactions[0].amount, 0)}` : ""}` : ""}</small>
         </form>
-        <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Starting cash + realized and open-position P&amp;L</small></div>
+        <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Contributed cash + closed P&amp;L + live open-position P&amp;L</small></div>
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
         <div><span>TODAY'S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
         <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
@@ -244,14 +260,14 @@ export default function Home() {
       </section>
 
       <section className="watchlist-panel">
-        <div className="watchlist-head"><div><span>LIVE SCORING FEED</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
+        <div className="watchlist-head"><div><span>LIVE SCORING FEED · HIGHEST SCORE FIRST</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
 
         {activeCandidates.length === 0 ? <p className="watchlist-empty">Nothing is currently worth watching. Atlas doesn't force trades — no qualifying story means no trade.</p> : <div className="candidate-list">{activeCandidates.map((c) => (
           <CandidateRow key={c.id} c={c} />
         ))}</div>}
 
         {rejectedCandidates.length > 0 && <section className="evidence-stream" aria-labelledby="evidence-stream-title">
-          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Latest real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
+          <div className="evidence-stream-head"><div><span>OBSERVATION STREAM</span><h3 id="evidence-stream-title">Highest-scoring real evidence</h3></div><strong>{rejectedCandidates.length} shown</strong></div>
           <p>These real stories were evaluated and rejected. A rejection is useful evidence—not inactivity—and never creates a paper trade.</p>
           <div className="candidate-list">{rejectedCandidates.slice(0, 30).map((c) => <CandidateRow key={c.id} c={c} />)}</div>
         </section>}
