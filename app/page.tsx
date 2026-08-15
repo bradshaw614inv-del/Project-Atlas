@@ -183,6 +183,7 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brandmark">A</span><div><strong>ATLAS</strong><small>AUTOMATED NEWS-DRIVEN SIMULATOR</small></div></div>
+        <div className="console-lights" aria-hidden="true"><i/><i/><i/><i/><span>SYS 04-77</span></div>
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
@@ -191,7 +192,7 @@ export default function Home() {
 
       <section className="hero forward-hero">
         <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
-        <div className="atlas-core" aria-hidden="true"><i/><i/><i/><b>A</b><span>SYSTEM ONLINE</span></div>
+        <div className="atlas-core" aria-hidden="true"><i/><i/><i/><b>A</b><span>TRACKING ARRAY // ONLINE</span></div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
       </section>
 
