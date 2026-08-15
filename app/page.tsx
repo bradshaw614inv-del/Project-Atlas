@@ -58,6 +58,7 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export default function Home() {
+  const [colorMode, setColorMode] = useState("cyan");
   const [account, setAccount] = useState<Account | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [lastScan, setLastScan] = useState<ScanRun | null>(null);
@@ -99,6 +100,18 @@ export default function Home() {
     setCandidates(data.candidates);
   }
   async function refreshInsights() { setInsights(await getJson<Insights>("/api/insights")); }
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem("atlas-color-mode") || "cyan";
+    setColorMode(saved);
+    document.documentElement.dataset.theme = saved;
+  }, []);
+
+  function changeColorMode(mode: string) {
+    setColorMode(mode);
+    document.documentElement.dataset.theme = mode;
+    window.localStorage.setItem("atlas-color-mode", mode);
+  }
 
   useEffect(() => {
     refreshState(); refreshPositions(); refreshCandidates(); refreshInsights();
@@ -183,7 +196,9 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brandmark">A</span><div><strong>ATLAS</strong><small>AUTOMATED NEWS-DRIVEN SIMULATOR</small></div></div>
-        <div className="console-lights" aria-hidden="true"><i/><i/><i/><i/><span>SYS 04-77</span></div>
+        <div className="theme-switcher" role="group" aria-label="Interface color mode">
+          {[{ id: "cyan", label: "CYAN" }, { id: "violet", label: "VIOLET" }, { id: "amber", label: "AMBER" }, { id: "cobalt", label: "COBALT" }].map((theme) => <button key={theme.id} type="button" className={colorMode === theme.id ? "active" : ""} aria-pressed={colorMode === theme.id} onClick={() => changeColorMode(theme.id)}><i className={`swatch ${theme.id}`} />{theme.label}</button>)}
+        </div>
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
