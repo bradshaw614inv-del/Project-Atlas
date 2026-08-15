@@ -58,7 +58,7 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export default function Home() {
-  const [colorMode, setColorMode] = useState("cyan");
+  const [colorMode, setColorMode] = useState("obsidian");
   const [account, setAccount] = useState<Account | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [lastScan, setLastScan] = useState<ScanRun | null>(null);
@@ -102,7 +102,9 @@ export default function Home() {
   async function refreshInsights() { setInsights(await getJson<Insights>("/api/insights")); }
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("atlas-color-mode") || "cyan";
+    const previous = window.localStorage.getItem("atlas-color-mode");
+    const legacy: Record<string, string> = { cyan: "arctic", violet: "void", amber: "obsidian", cobalt: "cobalt" };
+    const saved = previous ? (legacy[previous] ?? previous) : "obsidian";
     setColorMode(saved);
     document.documentElement.dataset.theme = saved;
   }, []);
@@ -197,7 +199,7 @@ export default function Home() {
       <header className="topbar">
         <div className="brand"><span className="brandmark">A</span><div><strong>ATLAS</strong><small>AUTOMATED NEWS-DRIVEN SIMULATOR</small></div></div>
         <div className="theme-switcher" role="group" aria-label="Interface color mode">
-          {[{ id: "cyan", label: "CYAN" }, { id: "violet", label: "VIOLET" }, { id: "amber", label: "AMBER" }, { id: "cobalt", label: "COBALT" }].map((theme) => <button key={theme.id} type="button" className={colorMode === theme.id ? "active" : ""} aria-pressed={colorMode === theme.id} onClick={() => changeColorMode(theme.id)}><i className={`swatch ${theme.id}`} />{theme.label}</button>)}
+          {["obsidian", "gunmetal", "ember", "void", "arctic", "cobalt", "forest", "sand", "crimson", "mono"].map((id) => <button key={id} type="button" className={colorMode === id ? "active" : ""} aria-pressed={colorMode === id} title={id[0].toUpperCase() + id.slice(1)} onClick={() => changeColorMode(id)}><i className={`swatch ${id}`} /><span>{id.toUpperCase()}</span></button>)}
         </div>
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
