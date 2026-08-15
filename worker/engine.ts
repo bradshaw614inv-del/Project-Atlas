@@ -5,6 +5,7 @@ import { candleVwap, getCandles, getCompanyNews, getCryptoNews, getQuote, type F
 import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
+import { getRecentSecFilings } from "./sec-edgar";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -16,7 +17,7 @@ const LOOKBACK_MINUTES = 360;
 const COLLECTION_LOOKBACK_DAYS = 1;
 const MAX_CANDIDATE_TICKERS = 15;
 
-export async function runScan(db: Db, apiKey: string, now: Date) {
+export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: string) {
   const startedAt = now.toISOString();
   const [scanRun] = await db.insert(schema.scanRuns).values({ startedAt }).returning();
   let storiesFetched = 0, candidatesEvaluated = 0, positionsOpened = 0, positionsClosed = 0;
@@ -85,6 +86,36 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
       }
     }
 
+    // EDGAR is a primary-source confirmation feed. It is deliberately
+    // rate-limited and never turns a filing into a bullish signal by itself.
+    // A filing can only strengthen provenance when a separately sourced story
+    // about the same ticker appears in the same 90-minute event window.
+    const secFilings = secUserAgent
+      ? await getRecentSecFilings(secUserAgent, TICKER_UNIVERSE, collectionStart).catch(() => [])
+      : [];
+    for (const filing of secFilings) {
+      const storyKey = `sec:${filing.accessionNumber}`;
+      const existing = await db.select().from(schema.newsStories).where(eq(schema.newsStories.finnhubId, storyKey)).limit(1);
+      let story = existing[0];
+      if (!story) {
+        const [inserted] = await db.insert(schema.newsStories).values({
+          finnhubId: storyKey,
+          headline: `${filing.ticker} files ${filing.form} with the SEC`,
+          summary: filing.description,
+          source: "SEC EDGAR",
+          url: filing.url,
+          publishedAt: filing.filedAt,
+          relatedTickers: filing.ticker,
+          finnhubCategory: "sec-filing",
+          firstSeenAt: startedAt,
+        }).returning();
+        story = inserted;
+        storiesFetched++;
+      }
+      const ageMinutes = (now.getTime() - new Date(story.publishedAt).getTime()) / 60000;
+      if (ageMinutes <= LOOKBACK_MINUTES) pairs.push({ ticker: filing.ticker, story });
+    }
+
     const cryptoItems = await getCryptoNews(apiKey).catch(() => []);
     for (const item of cryptoItems.slice(0, 50)) {
       const publishedAt = new Date(item.datetime * 1000);
@@ -108,13 +139,6 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
     }
 
     const uniqueTickers = Array.from(new Set(pairs.map((p) => p.ticker))).slice(0, MAX_CANDIDATE_TICKERS);
-    const independentSourcesByTicker = new Map<string, number>();
-    for (const ticker of uniqueTickers) {
-      const sources = new Set(pairs
-        .filter((pair) => pair.ticker === ticker && pair.story.source.trim() && /^https?:\/\//i.test(pair.story.url))
-        .map((pair) => pair.story.source.trim().toLowerCase()));
-      independentSourcesByTicker.set(ticker, sources.size);
-    }
     const quoteMap = new Map<string, FinnhubQuote | null>();
     for (const ticker of uniqueTickers) {
       quoteMap.set(ticker, await getQuote(apiKey, quoteSymbolForTicker(ticker)).catch(() => null));
@@ -140,12 +164,22 @@ export async function runScan(db: Db, apiKey: string, now: Date) {
         && lastCandidate.score >= CONFIRMATION_ELIGIBILITY_THRESHOLD
         && lastCandidate.status !== "DISQUALIFIED";
       const minutesSincePublished = (now.getTime() - new Date(story.publishedAt).getTime()) / 60000;
+      const storyTime = new Date(story.publishedAt).getTime();
+      const independentSourceCount = new Set(pairs
+        .filter((pair) => pair.ticker === ticker
+          && pair.story.source.trim()
+          && /^https?:\/\//i.test(pair.story.url)
+          && Math.abs(new Date(pair.story.publishedAt).getTime() - storyTime) <= 90 * 60 * 1000)
+        .map((pair) => pair.story.source.trim().toLowerCase())).size;
 
-      const result = scoreCandidate({
+      const scored = scoreCandidate({
         ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct,
         minutesSincePublished, seenConfirmationEligibleLastScan, source: story.source, sourceUrl: story.url,
-        independentSourceCount: independentSourcesByTicker.get(ticker) ?? 0,
+        independentSourceCount,
       });
+      const result = story.finnhubCategory === "sec-filing"
+        ? { ...scored, status: "CAUTION" as const, reason: `Primary-source ${story.headline} recorded for corroboration; an SEC filing alone never triggers a trade.` }
+        : scored;
 
       const [candidateRow] = await db.insert(schema.candidates).values({
         storyId: story.id,

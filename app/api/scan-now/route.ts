@@ -6,11 +6,12 @@ import { runScan } from "../../../worker/engine";
 // wrangler.jsonc calls the same runScan() every 5 minutes via worker/index.ts.
 export async function POST() {
   const apiKey = (env as unknown as { FINNHUB_API_KEY?: string }).FINNHUB_API_KEY;
+  const secUserAgent = (env as unknown as { SEC_USER_AGENT?: string }).SEC_USER_AGENT;
   if (!apiKey) {
     return Response.json({ error: "FINNHUB_API_KEY is not set. Add it to .dev.vars locally." }, { status: 501 });
   }
   try {
-    await runScan(getDb(), apiKey, new Date());
+    await runScan(getDb(), apiKey, new Date(), secUserAgent);
     return Response.json({ ok: true });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Scan failed." }, { status: 500 });

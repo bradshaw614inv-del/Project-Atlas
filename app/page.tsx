@@ -291,7 +291,7 @@ export default function Home() {
       </section>
 
       <section className="source-panel" aria-labelledby="source-title">
-        <div><span>EVIDENCE COVERAGE</span><h2 id="source-title">Every score shows its sourcing limits</h2><p>Atlas currently uses one upstream provider and measures the independent outlets carried by that feed. A traceable URL is mandatory for full source credit; one-outlet stories receive a skeptic penalty until corroborated.</p></div>
+        <div><span>EVIDENCE COVERAGE</span><h2 id="source-title">Every score shows its sourcing limits</h2><p>Atlas combines aggregated news with official SEC EDGAR filings. A filing can corroborate a nearby news event, but never triggers a trade by itself. A traceable URL is mandatory for full source credit; one-outlet stories receive a skeptic penalty.</p></div>
         <div className="source-stats"><article><strong>{insights?.provenance.providerCount ?? "—"}</strong><span>upstream provider</span></article><article><strong>{insights?.provenance.outletCount ?? "—"}</strong><span>distinct outlets</span></article><article><strong>{insights ? `${insights.provenance.traceableStories}/${insights.provenance.storiesChecked}` : "—"}</strong><span>traceable stories</span></article></div>
         <p className="source-list">{insights?.provenance.outlets.slice(0, 18).join(" · ") || "Waiting for verified outlets"}</p>
       </section>

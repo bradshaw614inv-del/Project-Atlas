@@ -32,6 +32,7 @@ export async function GET(request: Request) {
   ]);
   const traceableStories = stories.filter((story) => story.source.trim() && /^https?:\/\//i.test(story.url));
   const outlets = Array.from(new Set(traceableStories.map((story) => story.source.trim()).filter(Boolean))).sort();
+  const hasEdgar = stories.some((story) => story.source === "SEC EDGAR");
   const completedScans = scans.filter((scan) => scan.finishedAt && !scan.error).length;
   const failedScans = scans.filter((scan) => !!scan.error).length;
   const recentCompleteness = weatherRows.map((row) => {
@@ -58,7 +59,7 @@ export async function GET(request: Request) {
   return Response.json({
     threshold: 60,
     phase: "INFORMATION_COLLECTION",
-    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 1, providers: ["Finnhub"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub company-news and crypto-news endpoints", quotes: "Finnhub quote endpoint", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false },
+    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: hasEdgar ? 2 : 1, providers: hasEdgar ? ["Finnhub", "SEC EDGAR"] : ["Finnhub"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news plus official SEC EDGAR submissions", quotes: "Finnhub quote endpoint", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false },
     bands,
     nearMisses: candidateRows.filter((row) => row.nearMiss).slice(0, 50),
     confidenceTimeline: candidateRows.slice(0, 120).reverse().map((row) => ({ id: row.id, ticker: row.ticker, scanAt: row.scanAt, score: row.score, band: row.scoreBand, signals: JSON.parse(row.signalBreakdown || "[]") })),

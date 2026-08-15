@@ -9,6 +9,7 @@ interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
   FINNHUB_API_KEY: string;
+  SEC_USER_AGENT: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -49,7 +50,7 @@ const worker = {
 
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
     const db = drizzle(env.DB, { schema });
-    ctx.waitUntil(runScan(db, env.FINNHUB_API_KEY, new Date()));
+    ctx.waitUntil(runScan(db, env.FINNHUB_API_KEY, new Date(), env.SEC_USER_AGENT));
   },
 };
 
