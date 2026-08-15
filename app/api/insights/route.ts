@@ -59,7 +59,15 @@ export async function GET(request: Request) {
   return Response.json({
     threshold: 60,
     phase: "INFORMATION_COLLECTION",
-    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: hasEdgar ? 2 : 1, providers: hasEdgar ? ["Finnhub", "SEC EDGAR"] : ["Finnhub"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news plus official SEC EDGAR submissions", quotes: "Finnhub quote endpoint", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false },
+    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 8, providers: ["Finnhub", "SEC EDGAR", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Official issuer/agency releases"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news, SEC EDGAR, and official issuer/agency releases", quotes: "Finnhub with independent Coinbase crypto corroboration", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false, sourceRoles: [
+      { name: "Nasdaq Trading Halts", role: "Hard entry gate", status: "LIVE" },
+      { name: "Federal Reserve", role: "Macro-event caution gate", status: "LIVE" },
+      { name: "BLS", role: "Official macro verification", status: "LIVE" },
+      { name: "openFDA", role: "Regulatory corroboration", status: "LIVE" },
+      { name: "Coinbase", role: "Independent crypto quote check", status: "LIVE" },
+      { name: "Company IR / agencies", role: "Primary-source corroboration", status: "LIVE" },
+      { name: "X", role: "Discovery only; never scoring", status: "DISABLED — PAID" },
+    ] },
     bands,
     nearMisses: candidateRows.filter((row) => row.nearMiss).slice(0, 50),
     confidenceTimeline: candidateRows.slice(0, 120).reverse().map((row) => ({ id: row.id, ticker: row.ticker, scanAt: row.scanAt, score: row.score, band: row.scoreBand, signals: JSON.parse(row.signalBreakdown || "[]") })),

@@ -6,6 +6,7 @@ import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
+import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct } from "./free-sources";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -24,6 +25,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
   try {
     const clock = getMarketClock(now);
+    const freeSources = await collectFreeSourceSnapshot(now);
 
     const account = await getOrCreateAccountState(db, clock.tradingDay);
 
@@ -42,6 +44,10 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       decliners: breadth.filter((quote) => (quote.dp ?? 0) < 0).length,
       breadthSample: breadth.length, volatilityProxy,
     });
+    if (freeSources.macroEventRisk) {
+      weather.flags.push(`Federal Reserve event risk: ${freeSources.macroEvidence[0]}`);
+      if (weather.classification === "TRADE_ELIGIBLE") weather.classification = "CAUTION";
+    }
     await db.insert(schema.marketWeatherLog).values({
       scanAt: startedAt,
       classification: weather.classification,
@@ -179,7 +185,15 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       });
       const result = story.finnhubCategory === "sec-filing"
         ? { ...scored, status: "CAUTION" as const, reason: `Primary-source ${story.headline} recorded for corroboration; an SEC filing alone never triggers a trade.` }
-        : scored;
+        : freeSources.haltedSymbols.has(ticker)
+          ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: "Nasdaq reports this security halted or paused; no entry is permitted." }
+          : (() => {
+              const disagreement = isCryptoTicker(ticker) && priceAtScan !== null
+                ? cryptoQuoteDisagreementPct(priceAtScan, freeSources.cryptoPrices.get(ticker)) : null;
+              return disagreement !== null && disagreement > 1
+                ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: `Crypto quote conflict: independent Coinbase price differs by ${disagreement.toFixed(2)}%; no entry is permitted.` }
+                : scored;
+            })();
 
       const [candidateRow] = await db.insert(schema.candidates).values({
         storyId: story.id,
