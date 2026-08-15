@@ -210,7 +210,10 @@ export default function Home() {
       <section className="hero forward-hero">
         <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
         <div className="hero-telemetry" aria-hidden="true">
-          <div className="telemetry-orbit"><i/><i/><b>60</b><span>QUALIFY</span></div>
+          <div className="telemetry-orbit" aria-label="Atlas qualification threshold: 60 points">
+            <i/><i/><div className="holo-ring ring-a"/><div className="holo-ring ring-b"/>
+            <div className="holo-core"><small>THRESHOLD</small><b>60</b><span>QUALIFY</span></div>
+          </div>
           <div className="telemetry-stack"><span><b>08</b> SOURCES</span><span><b>05M</b> CYCLE</span><span><b>00</b> REAL ORDERS</span></div>
         </div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
