@@ -217,6 +217,9 @@ export default function Home() {
   const sourceCoverageFraction = insights && insights.provenance.storiesChecked > 0 ? insights.provenance.traceableStories / insights.provenance.storiesChecked : 0;
   const liveOrderCount = openPositions.filter((p) => !p.shadow).length;
   const orderFraction = maxOpenPositions > 0 ? liveOrderCount / maxOpenPositions : 0;
+  const collectorFraction = collectionHealth && collectionHealth.recentScans.length > 0
+    ? collectionHealth.recentScans.filter((s) => s.finishedAt && !s.error).length / collectionHealth.recentScans.length
+    : 0;
 
   return (
     <main>
@@ -227,9 +230,6 @@ export default function Home() {
         </div>
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
-
-      <section className="truth-banner accent-rose"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, Robinhood-supported crypto assets, news, timestamps, and market quotes must be real and source-traceable. Crypto scanning is restricted to BTC, ETH, SOL, and XRP. Only the paper execution and its calculated return or loss are simulated.</span></section>
-      <section className={`collection-health accent-rose ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
 
       <section className="hero forward-hero">
         <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
@@ -243,9 +243,25 @@ export default function Home() {
             scanCycleFraction={scanCycleFraction}
             liveOrderCount={liveOrderCount}
             orderFraction={orderFraction}
+            collectorHealthy={collectionHealth?.healthy ?? null}
+            collectorFraction={collectorFraction}
           />
         </div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
+      </section>
+
+      <section className="signal-panels">
+        <div className="dot-matrix-panel">
+          <span>[ CONFIDENCE TIMELINE ]</span>
+          <DotMatrix rows={10} points={(insights?.confidenceTimeline.slice(-24) ?? []).map((point) => ({
+            id: point.id, value: point.score, label: point.ticker, className: assetClass(point.ticker),
+            title: `${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`,
+          }))} />
+        </div>
+        <div className="dot-matrix-panel">
+          <span>[ KNOWLEDGE GRAPH — REAL TICKER / REGIME / CATALYST LINKS · HOVER OR TAP A NODE ]</span>
+          <KnowledgeGraph nodes={insights?.knowledgeGraph.nodes ?? []} edges={insights?.knowledgeGraph.edges ?? []} />
+        </div>
       </section>
 
       <section className="howto">
@@ -282,7 +298,7 @@ export default function Home() {
         <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
       </section>
 
-      <section className="tracker accent-lavender">
+      <section className="tracker">
         <div className="tracker-head"><div><span>SIMULATED POSITIONS</span><h2>Open now</h2><p>Managed automatically: staged stop-loss, breakeven, and trailing rules — no manual exits.</p></div></div>
         {openPositions.length === 0 ? <div className="empty"><p>No open positions. Atlas opens one automatically when a story clears every gate.</p></div> : <div className="event-grid">{openPositions.map((p) => {
           const live = livePrices[p.ticker];
@@ -303,7 +319,7 @@ export default function Home() {
         })}</div>}
       </section>
 
-      <section className="tracker accent-lavender">
+      <section className="tracker">
         <div className="tracker-head"><div><span>TRADE HISTORY</span><h2>Closed positions</h2><p>Every closed trade, win or loss — nothing is hidden or removed.</p></div></div>
         {closedPositions.length === 0 ? <div className="empty"><p>No closed trades yet.</p></div> : <div className="event-grid">{closedPositions.map((p) => (
           <article className="event-card" key={p.id}>
@@ -347,17 +363,6 @@ export default function Home() {
           <span>[ SCORE DISTRIBUTION ]</span>
           <DotMatrix rows={8} points={insights.bands.map((b) => ({ id: b.band, value: (b.count / Math.max(1, ...insights.bands.map((x) => x.count))) * 100, label: b.band, title: `${b.band}: ${b.count} observations` }))} />
         </div>}
-        <div className="dot-matrix-panel">
-          <span>[ CONFIDENCE TIMELINE ]</span>
-          <DotMatrix rows={10} points={(insights?.confidenceTimeline.slice(-24) ?? []).map((point) => ({
-            id: point.id, value: point.score, label: point.ticker, className: assetClass(point.ticker),
-            title: `${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`,
-          }))} />
-        </div>
-        <div className="dot-matrix-panel">
-          <span>[ KNOWLEDGE GRAPH — REAL TICKER / REGIME / CATALYST LINKS · HOVER OR TAP A NODE ]</span>
-          <KnowledgeGraph nodes={insights?.knowledgeGraph.nodes ?? []} edges={insights?.knowledgeGraph.edges ?? []} />
-        </div>
       </section>
 
       <section className="source-panel" aria-labelledby="source-title">
@@ -367,13 +372,13 @@ export default function Home() {
         <div className="source-roles">{insights?.provenance.sourceRoles?.map((source) => <article key={source.name}><b>{source.name}</b><span>{source.role}</span><em className={source.status.startsWith("LIVE") ? "live" : "off"}>{source.status}</em></article>)}</div>
       </section>
 
-      <section className="readiness-panel accent-lavender" aria-labelledby="readiness-title">
+      <section className="readiness-panel" aria-labelledby="readiness-title">
         <div className="readiness-head"><div><span>LIVE-CAPITAL READINESS</span><h2 id="readiness-title">Evidence before confidence</h2><p>Historical replay can accelerate learning, but only prospective paper trades and a frozen-rule holdout can unlock a pilot review.</p></div><strong className={insights?.readiness.status === "PILOT_REVIEW" ? "ready" : "not-ready"}>{insights?.readiness.status === "PILOT_REVIEW" ? "PILOT REVIEW" : "NOT READY"}</strong></div>
         <div className="readiness-gates">{insights?.readiness.gates.map((gate) => <article key={gate.label} className={gate.passed ? "passed" : "pending"}><i>{gate.passed ? "✓" : "·"}</i><div><b>{gate.label}</b><small>{gate.value}</small></div></article>)}</div>
         <div className="readiness-note"><b>Current policy</b><span>60-point threshold remains fixed</span><span>100 prospective closed trades</span><span>30-trade frozen holdout</span><span>80%+ weather completeness</span><span>zero forced trades</span></div>
       </section>
 
-      <section className="safety-panel accent-lavender" aria-labelledby="safety-title">
+      <section className="safety-panel" aria-labelledby="safety-title">
         <div className="safety-heading">
           <div><span>ENGINE RULES · ROBINHOOD CASH MODEL</span><h2 id="safety-title">What Atlas will never do</h2><p>Atlas is paper-only and models a conservative cash account. The current $13,000 balance is divided into five equal $2,600 slots; no broker is connected.</p></div>
           <strong>ROBINHOOD MODE</strong>
@@ -500,14 +505,12 @@ function TickRule() {
 // labeled mini-dial pills packed edge to edge (no medallion dead space).
 // The dial's ring/needle track the real highest-scoring candidate from this
 // session; the red mark is the fixed real 60-point qualification gate.
-function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, nextScanCountdown, scanCycleFraction, liveOrderCount, orderFraction }: {
+function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, nextScanCountdown, scanCycleFraction, liveOrderCount, orderFraction, collectorHealthy, collectorFraction }: {
   threshold: number; liveScore: number; sourceCount: number; sourceCoverageFraction: number;
   nextScanCountdown: string; scanCycleFraction: number; liveOrderCount: number; orderFraction: number;
+  collectorHealthy: boolean | null; collectorFraction: number;
 }) {
-  const radius = 82;
-  const circumference = 2 * Math.PI * radius;
   const scoreFraction = Math.max(0, Math.min(100, liveScore)) / 100;
-  const fillLength = scoreFraction * circumference;
   const needleRotation = scoreFraction * 360;
   const thresholdRotation = (Math.max(0, Math.min(100, threshold)) / 100) * 360;
   const beadCount = 44;
@@ -521,11 +524,6 @@ function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, n
       </div>
       <div className="hud-strip-dial">
         <svg viewBox="0 0 200 200" className="hud-strip-svg">
-          <circle cx="100" cy="100" r={radius} className="hud-gauge-track" transform="rotate(-90 100 100)" />
-          <circle
-            cx="100" cy="100" r={radius} className="hud-gauge-fill" transform="rotate(-90 100 100)"
-            style={{ strokeDasharray: `${fillLength} ${circumference}` }}
-          />
           <g className="hud-gauge-beads">
             {Array.from({ length: beadCount }).map((_, i) => (
               <circle key={i} cx="100" cy="12" r="2.2" transform={`rotate(${(i * 360) / beadCount} 100 100)`} />
@@ -542,6 +540,7 @@ function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, n
         <div className="hud-strip-dial-core"><b>{threshold}</b><small>gate</small></div>
       </div>
       <div className="hud-strip-pills telemetry-stack">
+        <span><MiniDial fraction={collectorFraction} /><b>{collectorHealthy === null ? "—" : collectorHealthy ? "OK" : "LOW"}</b> COLLECTOR</span>
         <span><MiniDial fraction={sourceCoverageFraction} /><b>{sourceCount || "—"}</b> SOURCES</span>
         <span><MiniDial fraction={scanCycleFraction} /><b>{nextScanCountdown}</b> NEXT SCAN</span>
         <span><MiniDial fraction={orderFraction} /><b>{liveOrderCount.toString().padStart(2, "0")}</b> LIVE ORDERS</span>
