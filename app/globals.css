@@ -475,9 +475,6 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
    ============================================================ */
 @media (max-width: 980px) {
   .hero-telemetry { width: 100%; }
-  .hud-strip { flex-wrap: wrap; }
-  .hud-strip-readout, .hud-strip-dial { flex: 1 1 50%; }
-  .hud-strip-pills { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; border-top: 1px solid var(--accent-soft); }
 }
 @media (max-width: 850px) {
   .account-strip { grid-template-columns: 1fr; }
@@ -489,6 +486,16 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
   .mode { margin-left: auto; font-size: 7px; }
   .hero { padding: 38px 18px 30px; }
   .hero h1 { font-size: 42px; }
+  /* The instrument strip is a fixed-width row on desktop; on a phone it has to
+     stack or the dial and track text run off the edge of the screen. */
+  .hud-strip { padding: 16px 18px; }
+  .hud-strip-main { gap: 12px; row-gap: 8px; flex-wrap: wrap; }
+  .hud-strip-number { font-size: 64px; }
+  .hud-strip-meta { flex: 1 1 120px; min-width: 0; }
+  .hud-strip-ring { width: 72px; height: 72px; margin-left: 0; }
+  .hud-strip-track span { display: block; }
+  .weather-strip { padding: 18px; }
+  .weather-strip-main { gap: 14px; }
   .primary, .secondary { width: 100%; }
   .info div { position: fixed; left: 16px; right: 16px; top: auto; bottom: 18px; width: auto; font-size: 14px; z-index: 30; }
   .account-strip { grid-template-columns: 1fr; }
