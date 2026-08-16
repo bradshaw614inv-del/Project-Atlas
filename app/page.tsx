@@ -226,6 +226,8 @@ export default function Home() {
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
       </section>
 
+      <CircuitNodes />
+
       <section className="howto">
         <h2>How to read this page</h2>
         <div className="howto-grid">
@@ -295,6 +297,8 @@ export default function Home() {
           </article>
         ))}</div>}
       </section>
+
+      <TickRule />
 
       <section className="watchlist-panel">
         <div className="watchlist-head"><div><span>LIVE SCORING FEED · HIGHEST SCORE FIRST</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
@@ -382,6 +386,29 @@ function CandidateRow({ c }: { c: Candidate }) {
       {c.signals?.length > 0 && <details className="score-breakdown"><summary>Confidence breakdown · analyst {c.analystScore.toFixed(0)} − skeptic {c.skepticPenalty.toFixed(0)}</summary>{c.signals.map((signal) => <div key={signal.key}><b>{signal.label}</b><span>{signal.score.toFixed(1)}/{signal.max}</span><small>{signal.evidence}</small></div>)}</details>}
     </div>
   </article>;
+}
+
+const CIRCUIT_NODES: [number, number, number][] = [
+  [10, 20, 5], [28, 12, 7], [46, 22, 4], [64, 14, 6], [82, 24, 5],
+  [16, 42, 4], [34, 50, 6], [52, 40, 5], [70, 48, 4], [88, 40, 5],
+];
+const CIRCUIT_EDGES: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [1, 6], [2, 6], [3, 7], [4, 8], [6, 7], [7, 8], [8, 9], [5, 6]];
+
+function CircuitNodes({ className = "" }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 98 60" className={`circuit-nodes ${className}`} aria-hidden="true">
+      <g className="circuit-nodes-edges">
+        {CIRCUIT_EDGES.map(([a, b], i) => <line key={i} x1={CIRCUIT_NODES[a][0]} y1={CIRCUIT_NODES[a][1]} x2={CIRCUIT_NODES[b][0]} y2={CIRCUIT_NODES[b][1]} />)}
+      </g>
+      <g className="circuit-nodes-dots">
+        {CIRCUIT_NODES.map(([x, y, r], i) => <circle key={i} cx={x} cy={y} r={r} />)}
+      </g>
+    </svg>
+  );
+}
+
+function TickRule() {
+  return <div className="tick-rule" aria-hidden="true" />;
 }
 
 function HudGauge({ value }: { value: number }) {

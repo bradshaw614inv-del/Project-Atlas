@@ -169,8 +169,8 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
 .eyebrow::before, .truth-banner strong::before, .collection-health strong::before, .watchlist-head span::before, .tracker-head span::before, .safety-heading span::before, .readiness-head span::before, .modal-head span::before, .evidence-stream-head span::before, .source-panel > div:first-child span::before { content: "["; position: absolute; left: 0; top: 0; opacity: .7; }
 .eyebrow::after, .truth-banner strong::after, .collection-health strong::after, .watchlist-head span::after, .tracker-head span::after, .safety-heading span::after, .readiness-head span::after, .modal-head span::after, .evidence-stream-head span::after, .source-panel > div:first-child span::after { content: "]"; position: absolute; right: 0; top: 0; opacity: .7; }
 .eyebrow { display: inline-block; color: var(--accent); font: 10px var(--font-geist-mono, monospace); letter-spacing: .2em; text-shadow: 0 0 10px color-mix(in srgb, var(--accent-glow) 45%, transparent); }
-.hero h1 { margin: 13px 0 16px; font-size: clamp(38px, 4.4vw, 62px); line-height: .98; letter-spacing: -.045em; font-weight: 380; }
-.hero h1 em { font-style: normal; color: transparent; -webkit-text-stroke: 1px var(--accent); text-shadow: 0 0 26px color-mix(in srgb, var(--accent-glow) 45%, transparent); }
+.hero h1 { margin: 13px 0 16px; font-size: clamp(34px, 4vw, 54px); line-height: 1; letter-spacing: -.01em; font: 700 clamp(34px, 4vw, 54px)/1 var(--font-display, var(--font-geist-sans)); }
+.hero h1 em { font-style: normal; color: var(--accent); text-shadow: 0 0 4px var(--accent), 0 0 24px color-mix(in srgb, var(--accent-glow) 55%, transparent); }
 .lede { max-width: 640px; font-size: 15px; line-height: 1.65; margin: 0; }
 .primary, .secondary, .live-btn {
   border: 1px solid var(--accent); padding: 14px 20px; font: 800 10px var(--font-geist-mono, monospace); letter-spacing: .1em; white-space: nowrap;
@@ -229,12 +229,29 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
   animation: gauge-breathe 3.2s ease-in-out infinite;
 }
 .telemetry-stack { display: grid; gap: 8px; }
-.telemetry-stack span { display: grid; padding: 9px 12px; border-left: 2px solid var(--accent); background: linear-gradient(90deg, color-mix(in srgb, var(--accent-panel) 55%, transparent), transparent); font: 7px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .1em; }
-.telemetry-stack b { font: 600 15px var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text); margin-bottom: 2px; text-shadow: 0 0 10px color-mix(in srgb, var(--accent-glow) 40%, transparent); }
+.telemetry-stack span {
+  position: relative; display: flex; align-items: baseline; gap: 6px; padding: 8px 22px 8px 14px; border-radius: 999px;
+  border: 1px solid var(--accent-soft); background: linear-gradient(90deg, color-mix(in srgb, var(--accent-panel) 55%, transparent), transparent);
+  font: 7px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .1em;
+}
+.telemetry-stack span::after {
+  content: ""; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 7px var(--accent-glow);
+}
+.telemetry-stack b { font: 600 15px var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text); text-shadow: 0 0 10px color-mix(in srgb, var(--accent-glow) 40%, transparent); }
 
 /* ============================================================
    HOW-TO + SETTINGS
    ============================================================ */
+/* Circuit-node cluster — small connected dots, lifted from the FRS logo-concept
+   reference. A quiet decorative divider between major sections. */
+.circuit-nodes { display: block; width: 220px; height: 135px; margin: 20px auto; opacity: .8; }
+.circuit-nodes-edges line { stroke: color-mix(in srgb, var(--accent) 40%, transparent); stroke-width: .6; }
+.circuit-nodes-dots circle { fill: var(--accent); opacity: .9; filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent-glow) 50%, transparent)); }
+
+/* Tick-mark ruler — thin measured rule, lifted from the FUSION reference panel. */
+.tick-rule { max-width: 1500px; margin: auto; height: 8px; border-bottom: 1px solid var(--accent-soft); background: repeating-linear-gradient(90deg, var(--accent-soft) 0 1px, transparent 1px 24px); background-repeat: repeat-x; background-size: 100% 8px; opacity: .65; }
+
 .howto { max-width: 1500px; margin: auto; padding: 22px 34px; border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, var(--card)); background: color-mix(in srgb, var(--surface) 80%, transparent); }
 .howto h2 { margin: 0 0 14px; font-size: 14px; letter-spacing: .02em; }
 .howto-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
@@ -448,7 +465,7 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
   .hero-telemetry { width: 100%; justify-content: flex-start; }
 }
 @media (max-width: 850px) {
-  .account-strip { grid-template-columns: repeat(2, 1fr); }
+  .account-strip { grid-template-columns: 1fr; }
   .safety-grid, .howto-grid, .readiness-gates, .intelligence-grid { grid-template-columns: repeat(2, 1fr); }
   .event-grid { grid-template-columns: 1fr; }
 }
@@ -462,7 +479,7 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
   .primary, .secondary { width: 100%; }
   .truth-banner, .collection-health { padding: 14px 18px; align-items: flex-start; }
   .info div { position: fixed; left: 16px; right: 16px; top: auto; bottom: 18px; width: auto; font-size: 14px; z-index: 30; }
-  .account-strip { grid-template-columns: 1fr 1fr; }
+  .account-strip { grid-template-columns: 1fr; }
   .account-strip > div, .account-strip > form { padding: 16px; }
   .account-strip strong { font-size: 22px; }
   .safety-panel, .readiness-panel, .intelligence-panel, .source-panel, .howto { padding: 24px 18px; }
