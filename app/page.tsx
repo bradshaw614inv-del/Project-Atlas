@@ -6,8 +6,9 @@ import {
   DEFAULT_MAX_OPEN_POSITIONS, DEFAULT_RISK_PER_TRADE_PCT, STOP_DISTANCE_PCT, TRAILING_DISTANCE_PCT,
 } from "../worker/positions";
 
-const STATE_POLL_MS = 15000;
-const CANDIDATES_POLL_MS = 30000;
+const STATE_POLL_MS = 10000;
+const CANDIDATES_POLL_MS = 12000;
+const INSIGHTS_POLL_MS = 12000;
 const MIN_VALIDATED_SAMPLE = 100;
 const CRYPTO_TICKERS = new Set(["BTC", "ETH", "SOL", "XRP"]);
 // Ids stay stable (matches stored/legacy localStorage values) — only the
@@ -128,7 +129,8 @@ export default function Home() {
     refreshState(); refreshPositions(); refreshCandidates(); refreshInsights();
     const stateInterval = setInterval(() => { refreshState(); refreshPositions(); }, STATE_POLL_MS);
     const candidateInterval = setInterval(refreshCandidates, CANDIDATES_POLL_MS);
-    return () => { clearInterval(stateInterval); clearInterval(candidateInterval); };
+    const insightsInterval = setInterval(refreshInsights, INSIGHTS_POLL_MS);
+    return () => { clearInterval(stateInterval); clearInterval(candidateInterval); clearInterval(insightsInterval); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -232,7 +234,14 @@ export default function Home() {
       </header>
 
       <section className="hero forward-hero">
-        <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
+        <div>
+          <p className="eyebrow">{weather?.classification.replace("_", " ") ?? "NO DATA YET"}</p>
+          <h1><em className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</em></h1>
+          <p className="lede">
+            {account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)} realized` : "—"} · {openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions} open ·{" "}
+            {lastScan ? `last scan ${timeAgo(lastScan.startedAt)}` : "no scans yet"}
+          </p>
+        </div>
         <div className="hero-telemetry">
           <HudStrip
             threshold={insights?.threshold ?? 60}
@@ -248,30 +257,6 @@ export default function Home() {
           />
         </div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
-      </section>
-
-      <section className="signal-panels">
-        <div className="dot-matrix-panel">
-          <span>[ CONFIDENCE TIMELINE ]</span>
-          <DotMatrix rows={10} points={(insights?.confidenceTimeline.slice(-24) ?? []).map((point) => ({
-            id: point.id, value: point.score, label: point.ticker, className: assetClass(point.ticker),
-            title: `${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`,
-          }))} />
-        </div>
-        <div className="dot-matrix-panel">
-          <span>[ KNOWLEDGE GRAPH — REAL TICKER / REGIME / CATALYST LINKS · HOVER OR TAP A NODE ]</span>
-          <KnowledgeGraph nodes={insights?.knowledgeGraph.nodes ?? []} edges={insights?.knowledgeGraph.edges ?? []} />
-        </div>
-      </section>
-
-      <section className="howto">
-        <h2>How to read this page</h2>
-        <div className="howto-grid">
-          <div><b>1. Market weather</b><p>A quick read of overall conditions. Atlas only opens new trades when this isn't "Sit out."</p></div>
-          <div><b>2. Allocation</b><p>The model account is divided into five equal slots. Only qualifying assets receive a slot; the rest stays cash.</p></div>
-          <div><b>3. Open &amp; closed positions</b><p>Every simulated trade Atlas has made, win or loss. Nothing is hidden.</p></div>
-          <div><b>4. Scoring feed</b><p>Every news story Atlas looked at. Most days most stories don't qualify — that's intentional, not a bug.</p></div>
-        </div>
       </section>
 
       <section className={`weather-banner ${weatherClass}`}>
@@ -296,6 +281,20 @@ export default function Home() {
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
         <div><span>TODAY'S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
         <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
+      </section>
+
+      <section className="signal-panels">
+        <div className="dot-matrix-panel">
+          <span>[ CONFIDENCE TIMELINE ]</span>
+          <DotMatrix rows={10} points={(insights?.confidenceTimeline.slice(-24) ?? []).map((point) => ({
+            id: point.id, value: point.score, label: point.ticker, className: assetClass(point.ticker),
+            title: `${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`,
+          }))} />
+        </div>
+        <div className="dot-matrix-panel">
+          <span>[ KNOWLEDGE GRAPH — REAL TICKER / REGIME / CATALYST LINKS · HOVER OR TAP A NODE ]</span>
+          <KnowledgeGraph nodes={insights?.knowledgeGraph.nodes ?? []} edges={insights?.knowledgeGraph.edges ?? []} />
+        </div>
       </section>
 
       <section className="tracker">
