@@ -81,6 +81,7 @@ export default function Home() {
   const [recentTransactions, setRecentTransactions] = useState<AccountTransaction[]>([]);
   const [scanning, setScanning] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   async function refreshState() {
     const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth; recentTransactions: AccountTransaction[] }>("/api/state");
@@ -127,6 +128,11 @@ export default function Home() {
     const candidateInterval = setInterval(refreshCandidates, CANDIDATES_POLL_MS);
     return () => { clearInterval(stateInterval); clearInterval(candidateInterval); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const clockInterval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(clockInterval);
   }, []);
 
   useEffect(() => {
@@ -210,10 +216,10 @@ export default function Home() {
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
-      <section className="truth-banner"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, Robinhood-supported crypto assets, news, timestamps, and market quotes must be real and source-traceable. Crypto scanning is restricted to BTC, ETH, SOL, and XRP. Only the paper execution and its calculated return or loss are simulated.</span></section>
-      <section className={`collection-health ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
+      <section className="truth-banner accent-rose"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, Robinhood-supported crypto assets, news, timestamps, and market quotes must be real and source-traceable. Crypto scanning is restricted to BTC, ETH, SOL, and XRP. Only the paper execution and its calculated return or loss are simulated.</span></section>
+      <section className={`collection-health accent-rose ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
 
-      <section className="hero forward-hero">
+      <section className="hero forward-hero accent-rose">
         <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
         <div className="hero-telemetry" aria-hidden="true">
           <HudGauge value={insights?.threshold ?? 60} />
@@ -262,7 +268,7 @@ export default function Home() {
         <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
       </section>
 
-      <section className="tracker">
+      <section className="tracker accent-lavender">
         <div className="tracker-head"><div><span>SIMULATED POSITIONS</span><h2>Open now</h2><p>Managed automatically: staged stop-loss, breakeven, and trailing rules — no manual exits.</p></div></div>
         {openPositions.length === 0 ? <div className="empty"><p>No open positions. Atlas opens one automatically when a story clears every gate.</p></div> : <div className="event-grid">{openPositions.map((p) => {
           const live = livePrices[p.ticker];
@@ -283,7 +289,7 @@ export default function Home() {
         })}</div>}
       </section>
 
-      <section className="tracker">
+      <section className="tracker accent-lavender">
         <div className="tracker-head"><div><span>TRADE HISTORY</span><h2>Closed positions</h2><p>Every closed trade, win or loss — nothing is hidden or removed.</p></div></div>
         {closedPositions.length === 0 ? <div className="empty"><p>No closed trades yet.</p></div> : <div className="event-grid">{closedPositions.map((p) => (
           <article className="event-card" key={p.id}>
@@ -314,7 +320,7 @@ export default function Home() {
         </section>}
       </section>
 
-      <section className="intelligence-panel">
+      <section className="intelligence-panel accent-sage">
         <div className="tracker-head"><div><span>ATLAS INTELLIGENCE</span><h2>Evidence collection &amp; calibration</h2><p>No performance claim is validated until it has at least {insights?.validationPolicy.minSampleSize ?? 30} real closed observations and passes an out-of-sample test. The live threshold remains 60.</p></div></div>
         <div className="intelligence-grid">
           <article><span>ATLAS EDGE</span><strong>{insights?.performance.atlasEdge == null ? "Collecting data" : insights.performance.atlasEdge.toFixed(3)}</strong><small>Average actual outcome minus predicted win probability</small></article>
@@ -343,13 +349,13 @@ export default function Home() {
         <div className="source-roles">{insights?.provenance.sourceRoles?.map((source) => <article key={source.name}><b>{source.name}</b><span>{source.role}</span><em className={source.status.startsWith("LIVE") ? "live" : "off"}>{source.status}</em></article>)}</div>
       </section>
 
-      <section className="readiness-panel" aria-labelledby="readiness-title">
+      <section className="readiness-panel accent-lavender" aria-labelledby="readiness-title">
         <div className="readiness-head"><div><span>LIVE-CAPITAL READINESS</span><h2 id="readiness-title">Evidence before confidence</h2><p>Historical replay can accelerate learning, but only prospective paper trades and a frozen-rule holdout can unlock a pilot review.</p></div><strong className={insights?.readiness.status === "PILOT_REVIEW" ? "ready" : "not-ready"}>{insights?.readiness.status === "PILOT_REVIEW" ? "PILOT REVIEW" : "NOT READY"}</strong></div>
         <div className="readiness-gates">{insights?.readiness.gates.map((gate) => <article key={gate.label} className={gate.passed ? "passed" : "pending"}><i>{gate.passed ? "✓" : "·"}</i><div><b>{gate.label}</b><small>{gate.value}</small></div></article>)}</div>
         <div className="readiness-note"><b>Current policy</b><span>60-point threshold remains fixed</span><span>100 prospective closed trades</span><span>30-trade frozen holdout</span><span>80%+ weather completeness</span><span>zero forced trades</span></div>
       </section>
 
-      <section className="safety-panel" aria-labelledby="safety-title">
+      <section className="safety-panel accent-lavender" aria-labelledby="safety-title">
         <div className="safety-heading">
           <div><span>ENGINE RULES · ROBINHOOD CASH MODEL</span><h2 id="safety-title">What Atlas will never do</h2><p>Atlas is paper-only and models a conservative cash account. The current $13,000 balance is divided into five equal $2,600 slots; no broker is connected.</p></div>
           <strong>ROBINHOOD MODE</strong>

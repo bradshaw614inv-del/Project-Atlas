@@ -65,6 +65,22 @@
   --asset-1: #dbdedf; --asset-2: #a7adae; --asset-3: #c3c8c9; --asset-4: #82898a;
 }
 
+/* Module accent colors — lifted directly from the FUSION reference sheet's three
+   color-coded panels (dusty rose, sage green, lavender). Scoped overrides: since
+   every rule below reads var(--accent)/--accent-soft/etc, wrapping a section in
+   one of these classes recolors everything inside it without touching a single
+   component rule. Independent of the user's chosen theme, same as the reference
+   sheet uses a different color per module regardless of "brand" color. */
+.accent-rose {
+  --accent: #c69a8d; --accent-glow: #c69a8d; --accent-soft: #5c4238; --accent-panel: #2a1c17; --accent-text: #ecd6cc;
+}
+.accent-sage {
+  --accent: #96af7c; --accent-glow: #96af7c; --accent-soft: #3f4c33; --accent-panel: #1c2417; --accent-text: #dfe8d3;
+}
+.accent-lavender {
+  --accent: #a99ecf; --accent-glow: #a99ecf; --accent-soft: #423d5c; --accent-panel: #1e1a2c; --accent-text: #e3ddf2;
+}
+
 html { color-scheme: dark; background: var(--page); }
 * { box-sizing: border-box; }
 body {
@@ -75,11 +91,20 @@ body::before {
   content: ""; position: fixed; inset: 0; z-index: 60; pointer-events: none; opacity: .5;
   background: repeating-linear-gradient(0deg, transparent 0 3px, color-mix(in srgb, var(--accent) 4%, transparent) 4px);
 }
+/* Paper grain — the FRS reference sheet has a visible canvas/print texture even
+   over flat black; this is the same idea via an SVG fractal-noise data URI. */
+body::after {
+  content: ""; position: fixed; inset: 0; z-index: 61; pointer-events: none; opacity: .05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
 main {
   position: relative; overflow: hidden; background-color: var(--page);
-  background-image: linear-gradient(color-mix(in srgb, var(--accent) 6%, transparent) 1px, transparent 1px),
+  background-image:
+    radial-gradient(circle, color-mix(in srgb, var(--accent) 22%, transparent) 1px, transparent 1.4px),
+    linear-gradient(color-mix(in srgb, var(--accent) 6%, transparent) 1px, transparent 1px),
     linear-gradient(90deg, color-mix(in srgb, var(--accent) 6%, transparent) 1px, transparent 1px);
-  background-size: 44px 44px;
+  background-size: 44px 44px, 44px 44px, 44px 44px;
+  background-position: -1px -1px, 0 0, 0 0;
 }
 main::before, main::after {
   content: ""; position: fixed; width: 620px; height: 620px; border-radius: 50%; pointer-events: none; z-index: 0;
