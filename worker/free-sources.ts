@@ -1,10 +1,19 @@
-import { ROBINHOOD_CRYPTO_UNIVERSE } from "./universe";
+import { ROBINHOOD_CRYPTO_UNIVERSE, TICKER_UNIVERSE } from "./universe";
+
+// Real observed values from Yahoo's public chart API: last price, previous
+// close, and a session VWAP computed from its real 5-minute OHLCV bars.
+// Nothing here is estimated — if a field is missing it stays null.
+export type IndexSnapshot = { price: number; prevClose: number | null; changePct: number | null; vwap: number | null };
+
+export type PressRelease = { source: string; title: string; url: string; publishedAt: string; tickers: string[] };
 
 export type FreeSourceSnapshot = {
   haltedSymbols: Set<string>;
   macroEventRisk: boolean;
   macroEvidence: string[];
   cryptoPrices: Map<string, number>;
+  indexes: Map<string, IndexSnapshot>;
+  pressReleases: PressRelease[];
   health: Record<string, "LIVE" | "UNAVAILABLE" | "DISABLED">;
 };
 
@@ -51,24 +60,117 @@ async function coinbasePrices() {
   return prices;
 }
 
+type YahooChart = {
+  chart?: { result?: { meta?: { regularMarketPrice?: number; chartPreviousClose?: number };
+    indicators?: { quote?: { high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[]; volume?: (number | null)[] }[] } }[] };
+};
+
+async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
+  const data = await json<YahooChart>(
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1d`,
+    { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } },
+  );
+  const result = data.chart?.result?.[0];
+  const price = Number(result?.meta?.regularMarketPrice);
+  const prevClose = Number(result?.meta?.chartPreviousClose);
+  if (!Number.isFinite(price) || price <= 0) throw new Error(`yahoo ${symbol}: no price`);
+  const bars = result?.indicators?.quote?.[0];
+  let valueVolume = 0, totalVolume = 0;
+  for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
+    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(Number);
+    if (![high, low, close, volume].every(Number.isFinite) || volume <= 0) continue;
+    valueVolume += ((high + low + close) / 3) * volume;
+    totalVolume += volume;
+  }
+  return {
+    price,
+    prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : null,
+    changePct: Number.isFinite(prevClose) && prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : null,
+    vwap: totalVolume > 0 ? valueVolume / totalVolume : null,
+  };
+}
+
+async function yahooIndexes() {
+  const indexes = new Map<string, IndexSnapshot>();
+  for (const symbol of ["SPY", "QQQ", "VIXY"]) {
+    try { indexes.set(symbol, await yahooIndexSnapshot(symbol)); } catch { /* stays absent — never estimated */ }
+  }
+  if (indexes.size === 0) throw new Error("yahoo: all index snapshots failed");
+  return indexes;
+}
+
+// Per-ticker backup quotes for symbols the primary feed dropped this scan —
+// real Yahoo last price and previous close, fetched only for the gaps.
+export async function yahooBackupQuotes(symbols: string[]): Promise<Map<string, IndexSnapshot>> {
+  const quotes = new Map<string, IndexSnapshot>();
+  for (const symbol of symbols) {
+    try { quotes.set(symbol, await yahooIndexSnapshot(symbol)); } catch { /* stays absent */ }
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  }
+  return quotes;
+}
+
+// Company press releases are primary-source material: the issuer speaking for
+// itself. A wire item only counts when it names a universe ticker via a real
+// exchange tag like "(NASDAQ: AAPL)" — never by fuzzy company-name matching.
+// Press releases corroborate news-feed stories; alone they never create candidates.
+const EXCHANGE_TAG = /\((?:NYSE|NASDAQ|Nasdaq|NYSE American|NYSEAMERICAN|CBOE|OTCQX|OTCQB)\s*:\s*([A-Z]{1,5})\)/g;
+
+function pressReleasesFromRss(xml: string, sourceName: string): PressRelease[] {
+  const items = xml.split(/<item[\s>]/i).slice(1);
+  const releases: PressRelease[] = [];
+  for (const item of items) {
+    const title = xmlValues(`<item>${item}</item>`, "title")[0] ?? "";
+    const link = xmlValues(`<item>${item}</item>`, "link")[0] ?? "";
+    const pubDate = xmlValues(`<item>${item}</item>`, "pubDate")[0] ?? "";
+    const description = xmlValues(`<item>${item}</item>`, "description")[0] ?? "";
+    const text = `${title} ${description}`;
+    const tickers = Array.from(new Set(Array.from(text.matchAll(EXCHANGE_TAG))
+      .map((match) => match[1].toUpperCase())
+      .filter((ticker) => TICKER_UNIVERSE.includes(ticker))));
+    const publishedAt = new Date(pubDate);
+    if (tickers.length > 0 && title && !Number.isNaN(publishedAt.getTime())) {
+      releases.push({ source: sourceName, title, url: link, publishedAt: publishedAt.toISOString(), tickers });
+    }
+  }
+  return releases;
+}
+
+async function pressReleaseWires() {
+  const results = await Promise.allSettled([
+    text("https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFpRWQ==", { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } })
+      .then((xml) => pressReleasesFromRss(xml, "Business Wire")),
+    text("https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss", { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } })
+      .then((xml) => pressReleasesFromRss(xml, "PR Newswire")),
+  ]);
+  if (results.every((result) => result.status === "rejected")) throw new Error("all press-release wires failed");
+  return results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
+}
+
 export async function collectFreeSourceSnapshot(now: Date): Promise<FreeSourceSnapshot> {
   const health: FreeSourceSnapshot["health"] = {
     "Nasdaq Trading Halts": "UNAVAILABLE", "Federal Reserve": "UNAVAILABLE", BLS: "UNAVAILABLE",
-    openFDA: "UNAVAILABLE", Coinbase: "UNAVAILABLE", "Company IR / agency releases": "LIVE", "X discovery": "DISABLED",
+    openFDA: "UNAVAILABLE", Coinbase: "UNAVAILABLE", "Yahoo Finance": "UNAVAILABLE", "Press-release wires": "UNAVAILABLE",
+    "Company IR / agency releases": "LIVE", "X discovery": "DISABLED",
   };
-  const [halts, fed, bls, fda, coinbase] = await Promise.allSettled([
-    nasdaqHalts(), federalReserveRisk(now), checkBls(), checkOpenFda(), coinbasePrices(),
+  const [halts, fed, bls, fda, coinbase, indexes, wires] = await Promise.allSettled([
+    nasdaqHalts(), federalReserveRisk(now), checkBls(), checkOpenFda(), coinbasePrices(), yahooIndexes(), pressReleaseWires(),
   ]);
   if (halts.status === "fulfilled") health["Nasdaq Trading Halts"] = "LIVE";
   if (fed.status === "fulfilled") health["Federal Reserve"] = "LIVE";
   if (bls.status === "fulfilled") health.BLS = "LIVE";
   if (fda.status === "fulfilled") health.openFDA = "LIVE";
   if (coinbase.status === "fulfilled") health.Coinbase = "LIVE";
+  if (indexes.status === "fulfilled") health["Yahoo Finance"] = "LIVE";
+  if (wires.status === "fulfilled") health["Press-release wires"] = "LIVE";
   return {
     haltedSymbols: halts.status === "fulfilled" ? halts.value : new Set(),
     macroEventRisk: fed.status === "fulfilled" && fed.value.length > 0,
     macroEvidence: fed.status === "fulfilled" ? fed.value : [],
-    cryptoPrices: coinbase.status === "fulfilled" ? coinbase.value : new Map(), health,
+    cryptoPrices: coinbase.status === "fulfilled" ? coinbase.value : new Map(),
+    indexes: indexes.status === "fulfilled" ? indexes.value : new Map(),
+    pressReleases: wires.status === "fulfilled" ? wires.value : [],
+    health,
   };
 }
 

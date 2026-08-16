@@ -17,16 +17,6 @@ export type FinnhubNewsItem = {
   url: string;
 };
 
-export type FinnhubCandles = {
-  c: number[];
-  h: number[];
-  l: number[];
-  o: number[];
-  t: number[];
-  v: number[];
-  s: "ok" | "no_data";
-};
-
 async function finnhubGet<T>(apiKey: string, path: string): Promise<T> {
   const res = await fetch(`https://finnhub.io/api/v1${path}${path.includes("?") ? "&" : "?"}token=${apiKey}`);
   if (!res.ok) throw new Error(`Finnhub ${path} failed (${res.status})`);
@@ -39,6 +29,36 @@ export async function getQuote(apiKey: string, symbol: string): Promise<FinnhubQ
   return data;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// The free tier enforces a per-minute quota plus a burst limit, and a scan
+// needs ~25 quotes. Firing them in one Promise.all burst gets a chunk of them
+// rate-limited and silently lost, which starves market weather and breadth of
+// real data. Fetch in small chunks with a gap and retry each failure once
+// after a pause — slower by ~2s per scan, but the data actually arrives.
+export async function getQuotesThrottled(apiKey: string, symbols: string[], chunkSize = 6, gapMs = 350): Promise<Map<string, FinnhubQuote | null>> {
+  const quotes = new Map<string, FinnhubQuote | null>();
+  const unique = Array.from(new Set(symbols));
+  for (let i = 0; i < unique.length; i += chunkSize) {
+    const chunk = unique.slice(i, i + chunkSize);
+    const results = await Promise.all(chunk.map(async (symbol) => {
+      try {
+        return [symbol, await getQuote(apiKey, symbol)] as const;
+      } catch {
+        await sleep(700);
+        try {
+          return [symbol, await getQuote(apiKey, symbol)] as const;
+        } catch {
+          return [symbol, null] as const;
+        }
+      }
+    }));
+    for (const [symbol, quote] of results) quotes.set(symbol, quote);
+    if (i + chunkSize < unique.length) await sleep(gapMs);
+  }
+  return quotes;
+}
+
 export async function getCompanyNews(apiKey: string, symbol: string, from: string, to: string): Promise<FinnhubNewsItem[]> {
   return finnhubGet<FinnhubNewsItem[]>(apiKey, `/company-news?symbol=${encodeURIComponent(symbol)}&from=${from}&to=${to}`);
 }
@@ -47,23 +67,3 @@ export async function getCryptoNews(apiKey: string): Promise<FinnhubNewsItem[]> 
   return finnhubGet<FinnhubNewsItem[]>(apiKey, "/news?category=crypto");
 }
 
-export async function getCandles(apiKey: string, symbol: string, from: number, to: number, resolution = "5"): Promise<FinnhubCandles | null> {
-  const data = await finnhubGet<FinnhubCandles>(apiKey, `/stock/candle?symbol=${encodeURIComponent(symbol)}&resolution=${resolution}&from=${from}&to=${to}`);
-  return data.s === "ok" && data.c?.length ? data : null;
-}
-
-export function candleVwap(candles: FinnhubCandles | null): number | null {
-  if (!candles) return null;
-  let valueVolume = 0;
-  let totalVolume = 0;
-  for (let i = 0; i < candles.c.length; i++) {
-    const volume = Number(candles.v[i]);
-    const high = Number(candles.h[i]);
-    const low = Number(candles.l[i]);
-    const close = Number(candles.c[i]);
-    if (![volume, high, low, close].every(Number.isFinite) || volume <= 0) continue;
-    valueVolume += ((high + low + close) / 3) * volume;
-    totalVolume += volume;
-  }
-  return totalVolume > 0 ? valueVolume / totalVolume : null;
-}

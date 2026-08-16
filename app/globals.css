@@ -110,7 +110,7 @@ button { cursor: pointer; }
 .negative { color: var(--danger) !important; }
 main h1, main h2, main h3, main strong, main b { color: var(--ink); }
 main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safety-heading p, .readiness-head p, .candidate-reason, .source-panel p { color: var(--subtle); }
-.account-strip span, .event-numbers span, .candidate-top span, .candidate-source, .weather-meta, .source-stats span, .source-list, .dot-matrix-col small, .readiness-gates small { color: var(--faint); }
+.account-strip span, .event-numbers span, .candidate-top span, .candidate-source, .source-stats span, .source-list, .dot-matrix-col small, .readiness-gates small { color: var(--faint); }
 
 /* ============================================================
    TOPBAR
@@ -257,13 +257,23 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
 /* ============================================================
    WEATHER BANNER
    ============================================================ */
-.weather-banner { max-width: 1500px; margin: auto; padding: 20px 34px; border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, var(--card)); display: flex; align-items: center; gap: 18px; flex-wrap: wrap; background: color-mix(in srgb, var(--surface) 80%, transparent); }
-.weather-badge { font: 800 12px var(--font-geist-mono, monospace); letter-spacing: .1em; padding: 9px 14px; border: 1px solid var(--accent); background: var(--accent-panel); color: var(--accent-text); box-shadow: 0 0 18px color-mix(in srgb, var(--accent-glow) 22%, transparent); }
-.weather-banner.caution .weather-badge { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, var(--card)); color: var(--warning); }
-.weather-banner.sitout .weather-badge { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, var(--card)); color: var(--danger); }
-.weather-flags { display: flex; gap: 8px; flex-wrap: wrap; flex: 1; }
-.weather-flags span { color: var(--subtle); font-size: 11px; border: 1px solid var(--accent-soft); padding: 5px 9px; }
-.weather-meta { color: var(--faint); font-size: 10px; width: 100%; }
+/* Weather strip — same flat instrument language as the HUD strip: a live
+   completeness dial, a classification in its severity color, and flag pills
+   whose status dots are derived from each flag's own measured value. */
+.weather-strip { max-width: 1500px; margin: auto; padding: 20px 34px; border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, var(--card)); display: grid; gap: 12px; background: color-mix(in srgb, var(--surface) 80%, transparent); }
+.weather-strip-main { display: flex; align-items: center; gap: 26px; flex-wrap: wrap; }
+.weather-strip-class { display: block; margin-top: 3px; font: 700 26px/1 var(--font-numeral, var(--font-geist-mono), monospace); letter-spacing: .04em; color: var(--accent-text); }
+.weather-strip.eligible .weather-strip-class { color: var(--success); }
+.weather-strip.caution .weather-strip-class { color: var(--warning); }
+.weather-strip.sitout .weather-strip-class { color: var(--danger); }
+.weather-strip-dial { display: flex; align-items: center; gap: 8px; font: 7px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .1em; }
+.weather-strip-dial b { font: 700 13px var(--font-numeral, var(--font-geist-mono), monospace); color: var(--accent-text); }
+.weather-strip-flags { display: flex; gap: 8px; flex-wrap: wrap; }
+.weather-strip-flags span { position: relative; color: var(--subtle); font-size: 11px; border: 1px solid var(--accent-soft); padding: 5px 9px 5px 22px; }
+.weather-strip-flags span::before { content: ""; position: absolute; left: 9px; top: 50%; transform: translateY(-50%); width: 5px; height: 5px; border-radius: 50%; background: var(--faint); }
+.weather-strip-flags span.tone-positive::before { background: var(--success); }
+.weather-strip-flags span.tone-negative::before { background: var(--danger); }
+.weather-strip-meta { color: var(--faint); font-size: 10px; }
 .field-error { color: var(--danger); font-size: 10px; margin: 0; grid-column: 1 / -1; }
 
 /* ============================================================

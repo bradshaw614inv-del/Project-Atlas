@@ -251,11 +251,7 @@ export default function Home() {
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
       </section>
 
-      <section className={`weather-banner ${weatherClass}`}>
-        <div className="weather-badge">{weather?.classification.replace("_", " ") ?? "NO DATA YET"}</div>
-        <div className="weather-flags">{weather?.flags.map((flag, i) => <span key={i}>{flag}</span>) ?? <span>Waiting for the first scan.</span>}</div>
-        <div className="weather-meta">{lastScan && <>Last scan {timeAgo(lastScan.startedAt)} · {lastScan.storiesFetched} stories · {lastScan.candidatesEvaluated} candidates evaluated{lastScan.error && <span className="field-error"> · {lastScan.error}</span>}</>}</div>
-      </section>
+      <WeatherStrip weather={weather} weatherClass={weatherClass} lastScan={lastScan} />
 
       <section className="account-strip settings-strip">
         <form className="capital-control" onSubmit={addFunds}>
@@ -548,6 +544,55 @@ function HudStrip({ threshold, liveScore, scoreDelta, topTicker, topBand, topSta
         <span><MiniDial fraction={orderFraction} /><b>{liveOrderCount.toString().padStart(2, "0")}</b> LIVE ORDERS</span>
       </div>
     </div>
+  );
+}
+
+// Reads the true direction out of a real weather flag so its status dot can
+// be colored honestly: green/red only when the flag itself carries a
+// measured value, neutral for anything unavailable or informational.
+function flagTone(flag: string): "positive" | "negative" | "neutral" {
+  if (/unavailable|completeness|will not infer/i.test(flag)) return "neutral";
+  const breadth = flag.match(/(\d+) advancing \/ (\d+) declining/i);
+  if (breadth) return Number(breadth[1]) >= Number(breadth[2]) ? "positive" : "negative";
+  if (/above vwap/i.test(flag)) return "positive";
+  if (/below vwap/i.test(flag)) return "negative";
+  if (/event risk|halted/i.test(flag)) return "negative";
+  const volatility = flag.match(/volatility proxy ([+-][\d.]+)%/i);
+  if (volatility) return Number(volatility[1]) > 0.5 ? "negative" : "positive";
+  const pct = flag.match(/([+-][\d.]+)%/);
+  if (pct) return Number(pct[1]) >= 0 ? "positive" : "negative";
+  return "neutral";
+}
+
+// Market weather as a live instrument: the dial needle tracks real weather
+// data completeness, the classification reads in its true severity color,
+// and every flag pill carries a dot colored by its own measured direction.
+function WeatherStrip({ weather, weatherClass, lastScan }: { weather: Weather | null; weatherClass: string; lastScan: ScanRun | null }) {
+  const flags = weather?.flags ?? [];
+  let completeness: number | null = null;
+  for (const flag of flags) {
+    const match = flag.match(/completeness (\d+)%/i);
+    if (match) completeness = Number(match[1]);
+  }
+  return (
+    <section className={`weather-strip ${weatherClass}`}>
+      <div className="weather-strip-main">
+        <div>
+          <span className="hud-strip-eyebrow">MARKET WEATHER</span>
+          <b className="weather-strip-class">{weather?.classification.replace("_", " ") ?? "NO DATA YET"}</b>
+        </div>
+        <span className="weather-strip-dial">
+          <MiniDial fraction={(completeness ?? 0) / 100} />
+          <b>{completeness === null ? "—" : `${completeness}%`}</b> DATA COMPLETE
+        </span>
+      </div>
+      <div className="weather-strip-flags">
+        {flags.length > 0
+          ? flags.map((flag, i) => <span key={i} className={`tone-${flagTone(flag)}`}>{flag}</span>)
+          : <span className="tone-neutral">Waiting for the first scan.</span>}
+      </div>
+      <div className="weather-strip-meta">{lastScan && <>Last scan {timeAgo(lastScan.startedAt)} · {lastScan.storiesFetched} stories · {lastScan.candidatesEvaluated} candidates evaluated{lastScan.error && <span className="field-error"> · {lastScan.error}</span>}</>}</div>
+    </section>
   );
 }
 

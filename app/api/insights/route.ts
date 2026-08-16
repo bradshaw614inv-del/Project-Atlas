@@ -59,12 +59,14 @@ export async function GET(request: Request) {
   return Response.json({
     threshold: 60,
     phase: "INFORMATION_COLLECTION",
-    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 8, providers: ["Finnhub", "SEC EDGAR", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Official issuer/agency releases"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news, SEC EDGAR, and official issuer/agency releases", quotes: "Finnhub with independent Coinbase crypto corroboration", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false, sourceRoles: [
+    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 10, providers: ["Finnhub", "Yahoo Finance", "SEC EDGAR", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Business Wire / PR Newswire", "Official issuer/agency releases"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news, SEC EDGAR, press-release wires, and official issuer/agency releases", quotes: "Finnhub with independent Yahoo Finance index and Coinbase crypto corroboration", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false, sourceRoles: [
+      { name: "Yahoo Finance", role: "Index backup quotes + real session VWAP", status: "LIVE" },
       { name: "Nasdaq Trading Halts", role: "Hard entry gate", status: "LIVE" },
       { name: "Federal Reserve", role: "Macro-event caution gate", status: "LIVE" },
       { name: "BLS", role: "Official macro verification", status: "LIVE" },
       { name: "openFDA", role: "Regulatory corroboration", status: "LIVE" },
       { name: "Coinbase", role: "Independent crypto quote check", status: "LIVE" },
+      { name: "Business Wire / PR Newswire", role: "Issuer press-release corroboration", status: "LIVE" },
       { name: "Company IR / agencies", role: "Primary-source corroboration", status: "LIVE" },
       { name: "X", role: "Discovery only; never scoring", status: "DISABLED — PAID" },
     ] },

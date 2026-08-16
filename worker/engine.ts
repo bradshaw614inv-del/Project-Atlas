@@ -1,12 +1,12 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
-import { candleVwap, getCandles, getCompanyNews, getCryptoNews, getQuote, type FinnhubQuote } from "./finnhub";
+import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub";
 import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
-import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct } from "./free-sources";
+import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooBackupQuotes } from "./free-sources";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -29,17 +29,39 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
     const account = await getOrCreateAccountState(db, clock.tradingDay);
 
-    const sessionFrom = Math.floor((now.getTime() - 8 * 60 * 60 * 1000) / 1000);
-    const [spy, qqq, volatilityProxy, spyCandles, ...breadthQuotes] = await Promise.all([
-      getQuote(apiKey, "SPY").catch(() => null),
-      getQuote(apiKey, "QQQ").catch(() => null),
-      getQuote(apiKey, "VIXY").catch(() => null),
-      getCandles(apiKey, "SPY", sessionFrom, Math.floor(now.getTime() / 1000)).catch(() => null),
-      ...TICKER_UNIVERSE.map((ticker) => getQuote(apiKey, ticker).catch(() => null)),
-    ]);
-    const breadth = breadthQuotes.filter((quote): quote is FinnhubQuote => !!quote && quote.dp !== null);
+    // One throttled pass covers the index trio and the whole universe; the same
+    // map is reused for candidate scoring below so nothing is fetched twice.
+    const finnhubQuotes = await getQuotesThrottled(apiKey, ["SPY", "QQQ", "VIXY", ...TICKER_UNIVERSE]);
+
+    // Whatever the primary feed still dropped, ask Yahoo for — a second
+    // independent source of real observed prices, never an estimate. This is
+    // what lifts breadth out of the "8/20 quotes" starvation that kept market
+    // weather permanently incomplete.
+    const asQuote = (snapshot: { price: number; prevClose: number | null; changePct: number | null }): FinnhubQuote | null =>
+      snapshot.changePct === null
+        ? null
+        : { c: snapshot.price, d: snapshot.prevClose === null ? null : snapshot.price - snapshot.prevClose, dp: snapshot.changePct, h: snapshot.price, o: snapshot.price, l: snapshot.price, pc: snapshot.prevClose ?? snapshot.price, t: Math.floor(now.getTime() / 1000) };
+
+    const universeQuotes = new Map(finnhubQuotes);
+    for (const [symbol, snapshot] of freeSources.indexes) {
+      if (universeQuotes.get(symbol)?.dp == null) universeQuotes.set(symbol, asQuote(snapshot) ?? universeQuotes.get(symbol) ?? null);
+    }
+    const gapSymbols = TICKER_UNIVERSE.filter((ticker) => universeQuotes.get(ticker)?.dp == null);
+    if (gapSymbols.length > 0) {
+      for (const [symbol, snapshot] of await yahooBackupQuotes(gapSymbols)) {
+        const quote = asQuote(snapshot);
+        if (quote) universeQuotes.set(symbol, quote);
+      }
+    }
+
+    const spy = universeQuotes.get("SPY") ?? null;
+    const qqq = universeQuotes.get("QQQ") ?? null;
+    const volatilityProxy = universeQuotes.get("VIXY") ?? null;
+    const breadth = TICKER_UNIVERSE
+      .map((ticker) => universeQuotes.get(ticker))
+      .filter((quote): quote is FinnhubQuote => !!quote && quote.dp !== null);
     const weather = classifyMarketWeather({
-      spy, qqq, spyVwap: candleVwap(spyCandles),
+      spy, qqq, spyVwap: freeSources.indexes.get("SPY")?.vwap ?? null,
       advancers: breadth.filter((quote) => (quote.dp ?? 0) > 0).length,
       decliners: breadth.filter((quote) => (quote.dp ?? 0) < 0).length,
       breadthSample: breadth.length, volatilityProxy,
@@ -145,9 +167,13 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     }
 
     const uniqueTickers = Array.from(new Set(pairs.map((p) => p.ticker))).slice(0, MAX_CANDIDATE_TICKERS);
+    // Stocks reuse the universe quotes fetched above; only symbols not already
+    // in that map (crypto pairs) cost additional throttled calls.
     const quoteMap = new Map<string, FinnhubQuote | null>();
+    const missingQuoteTickers = uniqueTickers.filter((ticker) => !universeQuotes.has(ticker));
+    const missingQuotes = await getQuotesThrottled(apiKey, missingQuoteTickers.map((ticker) => quoteSymbolForTicker(ticker)));
     for (const ticker of uniqueTickers) {
-      quoteMap.set(ticker, await getQuote(apiKey, quoteSymbolForTicker(ticker)).catch(() => null));
+      quoteMap.set(ticker, universeQuotes.get(ticker) ?? missingQuotes.get(quoteSymbolForTicker(ticker)) ?? null);
     }
 
     let currentAccount = account;
@@ -171,12 +197,20 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         && lastCandidate.status !== "DISQUALIFIED";
       const minutesSincePublished = (now.getTime() - new Date(story.publishedAt).getTime()) / 60000;
       const storyTime = new Date(story.publishedAt).getTime();
-      const independentSourceCount = new Set(pairs
+      const corroboratingOutlets = new Set(pairs
         .filter((pair) => pair.ticker === ticker
           && pair.story.source.trim()
           && /^https?:\/\//i.test(pair.story.url)
           && Math.abs(new Date(pair.story.publishedAt).getTime() - storyTime) <= 90 * 60 * 1000)
-        .map((pair) => pair.story.source.trim().toLowerCase())).size;
+        .map((pair) => pair.story.source.trim().toLowerCase()));
+      // A same-window press release naming this ticker is the issuer speaking
+      // for itself — the strongest corroboration a free feed can offer.
+      for (const release of freeSources.pressReleases) {
+        if (release.tickers.includes(ticker) && Math.abs(new Date(release.publishedAt).getTime() - storyTime) <= 90 * 60 * 1000) {
+          corroboratingOutlets.add(release.source.toLowerCase());
+        }
+      }
+      const independentSourceCount = corroboratingOutlets.size;
 
       const scored = scoreCandidate({
         ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct,
@@ -238,6 +272,10 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       }
     }
 
+    // Calibration reads Atlas's own accumulated observations; it must never
+    // be able to fail a scan, and it never mutates live scoring config.
+    try { await calibrateFromHistory(db, now); } catch { /* logged next scan */ }
+
     await db.update(schema.scanRuns).set({
       finishedAt: new Date().toISOString(),
       storiesFetched, candidatesEvaluated, positionsOpened, positionsClosed,
@@ -269,10 +307,108 @@ async function rememberKnowledge(db: Db, ticker: string, regime: string, catalys
     { key: regimeKey, type: "REGIME", label: regime },
     { key: catalystKey, type: "CATALYST", label: catalyst },
   ]) await db.insert(schema.knowledgeNodes).values(node).onConflictDoNothing();
+  // An edge is one relationship observed many times, not many rows. Repeat
+  // observations increment evidence_count so edge strength genuinely
+  // accumulates; weight mirrors that (capped) for the graph rendering.
   for (const edge of [
     { fromKey: tickerKey, toKey: regimeKey, relation: "OBSERVED_IN" },
     { fromKey: tickerKey, toKey: catalystKey, relation: "RESPONDED_TO" },
-  ]) await db.insert(schema.knowledgeEdges).values(edge);
+  ]) {
+    const [existing] = await db.select().from(schema.knowledgeEdges).where(and(
+      eq(schema.knowledgeEdges.fromKey, edge.fromKey),
+      eq(schema.knowledgeEdges.toKey, edge.toKey),
+      eq(schema.knowledgeEdges.relation, edge.relation),
+    )).limit(1);
+    if (existing) {
+      await db.update(schema.knowledgeEdges).set({
+        evidenceCount: existing.evidenceCount + 1,
+        weight: Math.min(5, 1 + Math.log2(existing.evidenceCount + 1)),
+        updatedAt: new Date().toISOString(),
+      }).where(eq(schema.knowledgeEdges.id, existing.id));
+    } else {
+      await db.insert(schema.knowledgeEdges).values(edge);
+    }
+  }
+}
+
+// Once a day, measure what actually happened after each catalyst type: for
+// every story observed at least twice in the last 7 days, take the real price
+// change from first observation to the latest one, grouped by catalyst label.
+// Findings land in the learning journal and as DRAFT experiment sample sizes —
+// evidence for review. The live 60-point gate and signal weights never change
+// here (validation policy: no live config mutation).
+async function calibrateFromHistory(db: Db, now: Date) {
+  const today = now.toISOString().slice(0, 10);
+  const [alreadyRan] = await db.select().from(schema.learningJournal).where(and(
+    eq(schema.learningJournal.kind, "CALIBRATION"),
+    gte(schema.learningJournal.createdAt, today),
+  )).limit(1);
+  if (alreadyRan) return;
+
+  const since = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const rows = await db.select({
+    storyId: schema.candidates.storyId, ticker: schema.candidates.ticker,
+    priceChangePct: schema.candidates.priceChangePct, signalBreakdown: schema.candidates.signalBreakdown,
+  }).from(schema.candidates).where(gte(schema.candidates.scanAt, since)).orderBy(schema.candidates.scanAt).limit(4000);
+
+  const stories = new Map<string, { label: string; lastChangePct: number | null; observations: number }>();
+  for (const row of rows) {
+    // Rows written before the signal_breakdown column existed carry no catalyst
+    // label. They are skipped outright — folding them into an "Unclassified"
+    // bucket would report a measurement of missing data as if it were a real
+    // finding about catalyst performance.
+    let label: string | null = null;
+    try {
+      const signals = JSON.parse(row.signalBreakdown || "[]") as { key: string; evidence: string }[];
+      label = signals.find((signal) => signal.key === "catalyst")?.evidence ?? null;
+    } catch { label = null; }
+    if (!label) continue;
+
+    const key = `${row.storyId}:${row.ticker}`;
+    const story = stories.get(key);
+    if (!story) stories.set(key, { label, lastChangePct: row.priceChangePct, observations: 1 });
+    else {
+      story.lastChangePct = row.priceChangePct ?? story.lastChangePct;
+      story.observations++;
+    }
+  }
+
+  const followThroughByCatalyst = new Map<string, number[]>();
+  for (const story of stories.values()) {
+    if (story.observations < 2 || story.lastChangePct === null) continue;
+    const list = followThroughByCatalyst.get(story.label) ?? [];
+    list.push(story.lastChangePct);
+    followThroughByCatalyst.set(story.label, list);
+  }
+
+  const findings: string[] = [];
+  for (const [label, changes] of followThroughByCatalyst) {
+    if (changes.length < 5) continue;
+    const sorted = [...changes].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    const positiveShare = changes.filter((change) => change > 0).length / changes.length;
+    findings.push(`${label}: median ${median >= 0 ? "+" : ""}${median.toFixed(2)}% follow-through, ${(positiveShare * 100).toFixed(0)}% positive, n=${changes.length}`);
+
+    const experimentName = `calibration:${label}`;
+    const [experiment] = await db.select().from(schema.experiments).where(eq(schema.experiments.name, experimentName)).limit(1);
+    if (experiment) {
+      await db.update(schema.experiments).set({ sampleSize: changes.length, updatedAt: new Date().toISOString() }).where(eq(schema.experiments.id, experiment.id));
+    } else {
+      await db.insert(schema.experiments).values({
+        name: experimentName,
+        hypothesis: `"${label}" stories show real positive price follow-through after first observation.`,
+        status: "DRAFT", minSampleSize: 30, sampleSize: changes.length,
+      });
+    }
+  }
+  if (findings.length === 0) return;
+
+  await db.insert(schema.learningJournal).values({
+    kind: "CALIBRATION",
+    title: `Daily catalyst calibration (${today})`,
+    detail: findings.join(" · "),
+    evidence: JSON.stringify({ windowDays: 7, storiesMeasured: stories.size, catalystsWithSample: findings.length }),
+  });
 }
 
 async function getOrCreateAccountState(db: Db, tradingDay: string) {
