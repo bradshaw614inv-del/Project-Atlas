@@ -10,6 +10,12 @@ const STATE_POLL_MS = 15000;
 const CANDIDATES_POLL_MS = 30000;
 const MIN_VALIDATED_SAMPLE = 100;
 const CRYPTO_TICKERS = new Set(["BTC", "ETH", "SOL", "XRP"]);
+// Ids stay stable (matches stored/legacy localStorage values) — only the
+// display label and underlying palette changed to drop blue/pink tones.
+const THEME_LABELS: Record<string, string> = {
+  obsidian: "Obsidian", gunmetal: "Gunmetal", ember: "Ember", void: "Carbon",
+  arctic: "Platinum", cobalt: "Rust", forest: "Forest", sand: "Sand", crimson: "Crimson", mono: "Mono",
+};
 
 function assetClass(ticker: string) {
   return CRYPTO_TICKERS.has(ticker) ? `crypto crypto-${ticker.toLowerCase()}` : "stock";
@@ -199,7 +205,7 @@ export default function Home() {
       <header className="topbar">
         <div className="brand"><span className="brandmark">A</span><div><strong>ATLAS</strong><small>AUTOMATED NEWS-DRIVEN SIMULATOR</small></div></div>
         <div className="theme-switcher" role="group" aria-label="Interface color mode">
-          {["obsidian", "gunmetal", "ember", "void", "arctic", "cobalt", "forest", "sand", "crimson", "mono"].map((id) => <button key={id} type="button" className={colorMode === id ? "active" : ""} aria-pressed={colorMode === id} title={id[0].toUpperCase() + id.slice(1)} onClick={() => changeColorMode(id)}><i className={`swatch ${id}`} /><span>{id.toUpperCase()}</span></button>)}
+          {Object.entries(THEME_LABELS).map(([id, label]) => <button key={id} type="button" className={colorMode === id ? "active" : ""} aria-pressed={colorMode === id} title={label} onClick={() => changeColorMode(id)}><i className={`swatch ${id}`} /><span>{label.toUpperCase()}</span></button>)}
         </div>
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
@@ -210,15 +216,12 @@ export default function Home() {
       <section className="hero forward-hero">
         <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
         <div className="hero-telemetry" aria-hidden="true">
-          <div className="holo-projector">
-            <div className="holo-beam"/><div className="holo-particles"><i/><i/><i/><i/><i/></div>
-            <div className="telemetry-orbit" aria-label="Atlas qualification threshold: 60 points">
-              <i/><i/><div className="holo-ring ring-a"/><div className="holo-ring ring-b"/><div className="holo-ring ring-c"/>
-              <div className="holo-core"><small>THRESHOLD</small><b>60</b><span>QUALIFY</span></div>
-            </div>
-            <div className="projector-base"><i/><b>ATLAS // SCORE GATE</b><i/></div>
+          <HudGauge value={insights?.threshold ?? 60} />
+          <div className="telemetry-stack">
+            <span><b>{insights?.provenance.providerCount ?? "—"}</b> SOURCES</span>
+            <span><b>05M</b> CYCLE</span>
+            <span><b>{openPositions.filter((p) => !p.shadow).length.toString().padStart(2, "0")}</b> LIVE ORDERS</span>
           </div>
-          <div className="telemetry-stack"><span><b>08</b> SOURCES</span><span><b>05M</b> CYCLE</span><span><b>00</b> REAL ORDERS</span></div>
         </div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
       </section>
@@ -316,7 +319,17 @@ export default function Home() {
           <article><span>KNOWLEDGE GRAPH</span><strong>{insights ? `${insights.knowledgeGraph.nodes.length} nodes` : "—"}</strong><small>Ticker, catalyst, and market-regime relationships</small></article>
         </div>
         <div className="calibration-bands">{insights?.bands.map((band) => <div key={band.band}><b>{band.band}</b><span>{band.count} observations</span><small>{band.winRate !== null ? `${Math.round(band.winRate * 100)}% observed wins / ${band.closed} closed` : `${band.closed}/30 closed outcomes collected`}</small></div>)}</div>
-        <div className="confidence-timeline" aria-label="Recent confidence timeline">{insights?.confidenceTimeline.slice(-24).map((point) => <div className={assetClass(point.ticker)} key={point.id} title={`${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`}><i style={{ height: `${Math.max(4, point.score)}%` }} /><small>{point.ticker}</small></div>)}</div>
+        {insights && insights.bands.some((b) => b.count > 0) && <div className="dot-matrix-panel">
+          <span>[ SCORE DISTRIBUTION ]</span>
+          <DotMatrix rows={8} points={insights.bands.map((b) => ({ id: b.band, value: (b.count / Math.max(1, ...insights.bands.map((x) => x.count))) * 100, label: b.band, title: `${b.band}: ${b.count} observations` }))} />
+        </div>}
+        <div className="dot-matrix-panel">
+          <span>[ CONFIDENCE TIMELINE ]</span>
+          <DotMatrix rows={10} points={(insights?.confidenceTimeline.slice(-24) ?? []).map((point) => ({
+            id: point.id, value: point.score, label: point.ticker, className: assetClass(point.ticker),
+            title: `${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`,
+          }))} />
+        </div>
       </section>
 
       <section className="source-panel" aria-labelledby="source-title">
@@ -369,6 +382,57 @@ function CandidateRow({ c }: { c: Candidate }) {
       {c.signals?.length > 0 && <details className="score-breakdown"><summary>Confidence breakdown · analyst {c.analystScore.toFixed(0)} − skeptic {c.skepticPenalty.toFixed(0)}</summary>{c.signals.map((signal) => <div key={signal.key}><b>{signal.label}</b><span>{signal.score.toFixed(1)}/{signal.max}</span><small>{signal.evidence}</small></div>)}</details>}
     </div>
   </article>;
+}
+
+function HudGauge({ value }: { value: number }) {
+  const radius = 82;
+  const circumference = 2 * Math.PI * radius;
+  const fillLength = (Math.min(value, 100) / 100) * circumference;
+  return (
+    <div className="hud-gauge" aria-label={`Atlas qualification threshold: ${value} points`}>
+      <i className="hud-gauge-beam" aria-hidden="true" />
+      <svg viewBox="0 0 200 200" className="hud-gauge-svg">
+        <defs>
+          <path id="hud-arc-top" d="M 28 100 A 72 72 0 0 1 172 100" />
+          <path id="hud-arc-bottom" d="M 28 100 A 72 72 0 0 0 172 100" />
+        </defs>
+        <circle cx="100" cy="100" r={radius} className="hud-gauge-track" transform="rotate(-90 100 100)" />
+        <circle
+          cx="100" cy="100" r={radius} className="hud-gauge-fill" transform="rotate(-90 100 100)"
+          style={{ strokeDasharray: `${fillLength} ${circumference}` }}
+        />
+        <g className="hud-gauge-spin"><circle cx="100" cy="100" r="74" className="hud-gauge-spin-ring" /></g>
+        <circle cx="100" cy="100" r="60" className="hud-gauge-inner" />
+        <g className="hud-gauge-ticks">
+          {Array.from({ length: 36 }).map((_, i) => (
+            <line key={i} x1="100" y1="10" x2="100" y2="18" transform={`rotate(${i * 10} 100 100)`} />
+          ))}
+        </g>
+        <text className="hud-gauge-label"><textPath href="#hud-arc-top" startOffset="50%" textAnchor="middle">THRESHOLD</textPath></text>
+        <text className="hud-gauge-label"><textPath href="#hud-arc-bottom" startOffset="50%" textAnchor="middle">QUALIFY</textPath></text>
+      </svg>
+      <div className="hud-gauge-core"><b>{value}</b></div>
+      <i className="hud-gauge-corner tl" /><i className="hud-gauge-corner tr" /><i className="hud-gauge-corner bl" /><i className="hud-gauge-corner br" />
+    </div>
+  );
+}
+
+function DotMatrix({ points, rows = 10 }: { points: { id: string | number; value: number; label: string; title?: string; className?: string }[]; rows?: number }) {
+  return (
+    <div className="dot-matrix">
+      {points.map((p) => {
+        const filled = Math.max(1, Math.round((Math.max(0, Math.min(100, p.value)) / 100) * rows));
+        return (
+          <div className={`dot-matrix-col ${p.className ?? ""}`} key={p.id} title={p.title}>
+            <div className="dot-matrix-cells">
+              {Array.from({ length: rows }).map((_, r) => <i key={r} className={r >= rows - filled ? "on" : ""} />)}
+            </div>
+            <small>{p.label}</small>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function SafetyRule({ value, label, detail }: { value: string; label: string; detail: string }) {
