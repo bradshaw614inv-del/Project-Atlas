@@ -525,45 +525,40 @@ function HudStrip({ threshold, liveScore, scoreDelta, topTicker, topBand, topSta
   const scoreFraction = Math.max(0, Math.min(100, liveScore)) / 100;
   const needleRotation = scoreFraction * 360;
   const thresholdRotation = (Math.max(0, Math.min(100, threshold)) / 100) * 360;
-  const beadCount = 44;
+  const beadCount = 40;
   const gap = liveScore - threshold;
   return (
     <div className="hud-strip" aria-label={`Live best candidate score ${liveScore.toFixed(0)}, versus a ${threshold}-point qualification gate`}>
-      <div className="hud-strip-readout">
-        <div className="hud-strip-headline">
-          <TrendGlyph delta={scoreDelta} />
-          <div className="hud-strip-value"><b>{liveScore.toFixed(0)}</b></div>
-          <div className="hud-strip-meta">
-            <span className="hud-strip-eyebrow">LIVE SCORE</span>
-            <span>{topTicker ? `${topTicker} · BAND ${topBand}` : "no candidate yet"}</span>
-            <span>{topStatus ?? "—"}</span>
-          </div>
+      <div className="hud-strip-main">
+        <TrendGlyph delta={scoreDelta} />
+        <b className="hud-strip-number">{liveScore.toFixed(0)}</b>
+        <div className="hud-strip-meta">
+          <span className="hud-strip-eyebrow">LIVE SCORE</span>
+          <span>{topTicker ? `${topTicker} · BAND ${topBand}` : "no candidate yet"}</span>
+          <span>{topStatus ?? "—"}</span>
         </div>
-        <div className="hud-strip-track">
-          <div className="hud-strip-track-line"><i /><i /></div>
-          <span>
-            {gap >= 0 ? `+${gap.toFixed(0)} over the ${threshold}-point gate` : `${Math.abs(gap).toFixed(0)} short of the ${threshold}-point gate`}
-            {" · "}{evaluatedThisScan} evaluated this scan
-            {scoreDelta !== 0 && ` · ${scoreDelta > 0 ? "+" : ""}${scoreDelta.toFixed(0)} vs last scan`}
-          </span>
-        </div>
-      </div>
-      <div className="hud-strip-dial">
-        <svg viewBox="0 0 200 200" className="hud-strip-svg">
+        <svg viewBox="0 0 200 200" className="hud-strip-ring" aria-label={`${threshold}-point qualification gate, marked in red`}>
           <g className="hud-gauge-beads">
             {Array.from({ length: beadCount }).map((_, i) => (
-              <circle key={i} cx="100" cy="12" r="2.2" transform={`rotate(${(i * 360) / beadCount} 100 100)`} />
+              <circle key={i} cx="100" cy="10" r="3" transform={`rotate(${(i * 360) / beadCount} 100 100)`} />
             ))}
           </g>
           <g className="hud-gauge-threshold-mark" transform={`rotate(${thresholdRotation} 100 100)`}>
-            <line x1="100" y1="16" x2="100" y2="30" />
+            <line x1="100" y1="14" x2="100" y2="32" />
           </g>
           <g className="hud-gauge-needle" style={{ transform: `rotate(${needleRotation}deg)`, transformOrigin: "100px 100px" }}>
-            <line x1="100" y1="100" x2="100" y2="34" />
-            <circle cx="100" cy="34" r="3.6" />
+            <line x1="100" y1="100" x2="100" y2="36" />
+            <circle cx="100" cy="36" r="4" />
           </g>
         </svg>
-        <div className="hud-strip-dial-core"><b>{threshold}</b><small>gate</small></div>
+      </div>
+      <div className="hud-strip-track">
+        <div className="hud-strip-track-line"><i /><i /></div>
+        <span>
+          {gap >= 0 ? `+${gap.toFixed(0)} over the ${threshold}-point gate` : `${Math.abs(gap).toFixed(0)} short of the ${threshold}-point gate`}
+          {" · "}{evaluatedThisScan} evaluated this scan
+          {scoreDelta !== 0 && ` · ${scoreDelta > 0 ? "+" : ""}${scoreDelta.toFixed(0)} vs last scan`}
+        </span>
       </div>
       <div className="hud-strip-pills telemetry-stack">
         <span><MiniDial fraction={collectorFraction} /><b>{collectorHealthy === null ? "—" : collectorHealthy ? "OK" : "LOW"}</b> COLLECTOR</span>
@@ -581,11 +576,10 @@ function HudStrip({ threshold, liveScore, scoreDelta, topTicker, topBand, topSta
 function TrendGlyph({ delta }: { delta: number }) {
   const dir = delta > 0.5 ? 1 : delta < -0.5 ? -1 : 0;
   return (
-    <svg viewBox="0 0 28 28" className="trend-glyph" aria-label={dir > 0 ? "Score rising" : dir < 0 ? "Score falling" : "Score flat"}>
-      <circle cx="14" cy="14" r="11" />
+    <svg viewBox="0 0 64 64" className="trend-glyph" aria-label={dir > 0 ? "Score rising" : dir < 0 ? "Score falling" : "Score flat"}>
       {dir !== 0
-        ? <path d={dir > 0 ? "M9 16 L14 10 L19 16" : "M9 12 L14 18 L19 12"} className={dir > 0 ? "up" : "down"} />
-        : <line x1="9" y1="14" x2="19" y2="14" />}
+        ? <path d={dir > 0 ? "M18 34 L32 16 L46 34 L36 34 L36 48 L28 48 L28 34 Z" : "M18 30 L32 48 L46 30 L36 30 L36 16 L28 16 L28 30 Z"} className={dir > 0 ? "up" : "down"} />
+        : <path d="M14 32 L50 32 M40 22 L50 32 L40 42" className="flat" />}
     </svg>
   );
 }

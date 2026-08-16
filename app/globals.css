@@ -196,44 +196,36 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
 
 .hero-telemetry { position: relative; z-index: 2; }
 
-/* HUD strip — flat technical schematic, matched directly to the FUSION
-   reference panel: no glow, no blur, no soft bloom. Thin hairline strokes,
-   crisp separated dots, blocky mono numerals. A dial is either a ring of
-   static beads OR a small tick-and-needle instrument, never a glowing arc —
-   the reference has no such thing, so neither does this. */
-.hud-strip { display: flex; align-items: stretch; border: 1px solid var(--accent-soft); background: var(--card); }
-.hud-strip-readout { flex: 1 1 auto; min-width: 220px; padding: 16px 22px; display: flex; flex-direction: column; justify-content: center; gap: 10px; border-right: 1px solid var(--accent-soft); }
-.hud-strip-headline { display: flex; align-items: center; gap: 12px; }
+/* HUD strip — matched directly to the FUSION reference's "005" panel: one
+   continuous flat module (no boxed-off compartments inside it), a bold
+   connector-arrow icon, a numeral that dominates the panel, a bare beaded
+   ring with no text caged inside it, and a thin connector track underneath. */
+.hud-strip { padding: 20px 26px; border: 1px solid var(--accent-soft); background: var(--card); display: flex; flex-direction: column; gap: 12px; }
+.hud-strip-main { display: flex; align-items: center; gap: 18px; }
+.hud-strip-number { font: 800 clamp(52px, 6vw, 84px)/.85 var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text); }
 .hud-strip-eyebrow { display: block; font: 700 8px var(--font-geist-mono, monospace); letter-spacing: .18em; color: var(--accent); }
-.hud-strip-value { display: flex; align-items: baseline; }
-.hud-strip-value b { font: 700 44px/1 var(--font-geist-mono, monospace); color: var(--accent-text); }
 .hud-strip-meta { display: flex; flex-direction: column; gap: 3px; }
-.hud-strip-meta span:nth-child(2) { font: 700 11px var(--font-geist-mono, monospace); color: var(--accent-text); letter-spacing: .02em; }
+.hud-strip-meta span:nth-child(2) { font: 700 12px var(--font-geist-mono, monospace); color: var(--accent-text); letter-spacing: .02em; }
 .hud-strip-meta span:nth-child(3) { font: 9px var(--font-geist-mono, monospace); color: var(--faint); letter-spacing: .06em; text-transform: uppercase; }
-.trend-glyph { width: 26px; height: 26px; flex-shrink: 0; }
-.trend-glyph circle { fill: none; stroke: var(--accent-soft); stroke-width: 1.2; }
-.trend-glyph path, .trend-glyph line { fill: none; stroke: var(--faint); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.trend-glyph path.up { stroke: var(--success); }
-.trend-glyph path.down { stroke: var(--danger); }
-.hud-strip-track-line { position: relative; height: 1px; background: var(--accent-soft); margin: 0 6px 6px; }
-.hud-strip-track-line i { position: absolute; top: 50%; transform: translateY(-50%); width: 5px; height: 5px; border-radius: 50%; border: 1px solid var(--accent-soft); background: var(--card); }
-.hud-strip-track-line i:first-child { left: -6px; }
-.hud-strip-track-line i:last-child { right: 30%; }
-.hud-strip-track span { font: 10px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .03em; }
-.hud-strip-dial { position: relative; flex: 0 0 130px; display: grid; place-items: center; border-right: 1px solid var(--accent-soft); }
-.hud-strip-svg { width: 104px; height: 104px; }
+.trend-glyph { width: 40px; height: 40px; flex-shrink: 0; }
+.trend-glyph path { stroke-linecap: round; stroke-linejoin: round; }
+.trend-glyph path.up { fill: var(--success); }
+.trend-glyph path.down { fill: var(--danger); }
+.trend-glyph path.flat { fill: none; stroke: var(--faint); stroke-width: 4; }
+.hud-strip-ring { width: 92px; height: 92px; flex-shrink: 0; margin-left: auto; }
 .hud-gauge-beads circle { fill: var(--accent); }
-.hud-gauge-threshold-mark line { stroke: var(--danger); stroke-width: 2; stroke-linecap: round; }
+.hud-gauge-threshold-mark line { stroke: var(--danger); stroke-width: 2.5; stroke-linecap: round; }
 .hud-gauge-needle { transition: transform .8s cubic-bezier(.4,0,.2,1); }
-.hud-gauge-needle line { stroke: var(--accent-text); stroke-width: 1.5; }
+.hud-gauge-needle line { stroke: var(--accent-text); stroke-width: 2; }
 .hud-gauge-needle circle { fill: var(--accent-text); }
-.hud-strip-dial-core { position: absolute; display: grid; place-items: center; text-align: center; gap: 1px; }
-.hud-strip-dial-core b { font: 700 22px var(--font-geist-mono, monospace); color: var(--accent-text); }
-.hud-strip-dial-core small { display: block; font: 700 7px var(--font-geist-mono, monospace); letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
-.hud-strip-pills { flex: 0 0 190px; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 12px 16px; }
+.hud-strip-track-line { position: relative; height: 1px; background: var(--accent-soft); margin: 0 6px 6px; }
+.hud-strip-track-line i { position: absolute; top: 50%; transform: translateY(-50%); width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--accent-soft); background: var(--card); }
+.hud-strip-track-line i:first-child { left: -6px; }
+.hud-strip-track-line i:last-child { right: 40%; }
+.hud-strip-track span { font: 10px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .03em; }
+.hud-strip-pills { display: flex; flex-wrap: wrap; gap: 10px; padding-top: 4px; border-top: 1px solid var(--accent-soft); }
 .telemetry-stack span {
-  position: relative; display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px;
-  border-top: 1px solid var(--accent-soft); border-bottom: 1px solid var(--accent-soft);
+  position: relative; display: flex; align-items: center; gap: 8px; padding: 6px 16px 6px 0;
   font: 7px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .1em;
 }
 .telemetry-stack span::after { content: ""; position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
