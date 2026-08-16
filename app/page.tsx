@@ -11,12 +11,6 @@ const CANDIDATES_POLL_MS = 12000;
 const INSIGHTS_POLL_MS = 12000;
 const MIN_VALIDATED_SAMPLE = 100;
 const CRYPTO_TICKERS = new Set(["BTC", "ETH", "SOL", "XRP"]);
-// Ids stay stable (matches stored/legacy localStorage values) — only the
-// display label and underlying palette changed to drop blue/pink tones.
-const THEME_LABELS: Record<string, string> = {
-  obsidian: "Obsidian", gunmetal: "Gunmetal", ember: "Ember", void: "Carbon",
-  arctic: "Platinum", cobalt: "Rust", forest: "Forest", sand: "Sand", crimson: "Crimson", mono: "Mono",
-};
 
 function assetClass(ticker: string) {
   return CRYPTO_TICKERS.has(ticker) ? `crypto crypto-${ticker.toLowerCase()}` : "stock";
@@ -67,7 +61,6 @@ async function getJson<T>(url: string): Promise<T> {
 }
 
 export default function Home() {
-  const [colorMode, setColorMode] = useState("obsidian");
   const [account, setAccount] = useState<Account | null>(null);
   const [weather, setWeather] = useState<Weather | null>(null);
   const [lastScan, setLastScan] = useState<ScanRun | null>(null);
@@ -113,18 +106,8 @@ export default function Home() {
   async function refreshInsights() { setInsights(await getJson<Insights>("/api/insights")); }
 
   useEffect(() => {
-    const previous = window.localStorage.getItem("atlas-color-mode");
-    const legacy: Record<string, string> = { cyan: "arctic", violet: "void", amber: "obsidian", cobalt: "cobalt" };
-    const saved = previous ? (legacy[previous] ?? previous) : "obsidian";
-    setColorMode(saved);
-    document.documentElement.dataset.theme = saved;
+    document.documentElement.dataset.theme = "obsidian";
   }, []);
-
-  function changeColorMode(mode: string) {
-    setColorMode(mode);
-    document.documentElement.dataset.theme = mode;
-    window.localStorage.setItem("atlas-color-mode", mode);
-  }
 
   useEffect(() => {
     refreshState(); refreshPositions(); refreshCandidates(); refreshInsights();
@@ -234,9 +217,6 @@ export default function Home() {
     <main>
       <header className="topbar">
         <div className="brand"><span className="brandmark">A</span><div><strong>ATLAS</strong><small>AUTOMATED NEWS-DRIVEN SIMULATOR</small></div></div>
-        <div className="theme-switcher" role="group" aria-label="Interface color mode">
-          {Object.entries(THEME_LABELS).map(([id, label]) => <button key={id} type="button" className={colorMode === id ? "active" : ""} aria-pressed={colorMode === id} title={label} onClick={() => changeColorMode(id)}><i className={`swatch ${id}`} /><span>{label.toUpperCase()}</span></button>)}
-        </div>
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
       </header>
 
@@ -534,11 +514,12 @@ function HudStrip({ threshold, liveScore, scoreDelta, topTicker, topBand, topSta
         <b className="hud-strip-number">{liveScore.toFixed(0)}</b>
         <div className="hud-strip-meta">
           <span className="hud-strip-eyebrow">LIVE SCORE</span>
+          <span className="hud-strip-gate">NEEDS {threshold} TO QUALIFY</span>
           <span>{topTicker ? `${topTicker} · BAND ${topBand}` : "no candidate yet"}</span>
           <span>{topStatus ?? "—"}</span>
         </div>
-        <svg viewBox="0 0 200 200" className="hud-strip-ring" aria-label={`${threshold}-point qualification gate, marked in red`}>
-          <g className="hud-gauge-beads">
+        <svg viewBox="0 0 200 200" className="hud-strip-ring" aria-label={`${threshold}-point qualification gate, marked in red. Ring spins while Atlas is collecting normally${collectorHealthy === false ? "; currently stalled" : ""}.`}>
+          <g className={`hud-gauge-beads ${collectorHealthy === false ? "stalled" : "spinning"}`}>
             {Array.from({ length: beadCount }).map((_, i) => (
               <circle key={i} cx="100" cy="10" r="3" transform={`rotate(${(i * 360) / beadCount} 100 100)`} />
             ))}
