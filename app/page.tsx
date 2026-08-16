@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT,
   DEFAULT_MAX_OPEN_POSITIONS, DEFAULT_RISK_PER_TRADE_PCT, STOP_DISTANCE_PCT, TRAILING_DISTANCE_PCT,
@@ -85,6 +85,7 @@ export default function Home() {
   const [scanning, setScanning] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const prevScoreRef = useRef<number | null>(null);
 
   async function refreshState() {
     const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth; recentTransactions: AccountTransaction[] }>("/api/state");
@@ -138,6 +139,10 @@ export default function Home() {
     const clockInterval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(clockInterval);
   }, []);
+
+  useEffect(() => {
+    prevScoreRef.current = candidates.length ? Math.max(...candidates.map((c) => c.score)) : prevScoreRef.current;
+  }, [candidates]);
 
   useEffect(() => {
     const tickers = Array.from(new Set(openPositions.map((p) => p.ticker)));
@@ -210,7 +215,9 @@ export default function Home() {
   const riskPerTradePct = account?.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT;
   const weatherClass = weather?.classification === "TRADE_ELIGIBLE" ? "eligible" : weather?.classification === "SIT_OUT" ? "sitout" : "caution";
 
-  const bestLiveScore = candidates.length ? Math.max(...candidates.map((c) => c.score)) : 0;
+  const topCandidate = candidates.length ? candidates.reduce((a, b) => (b.score > a.score ? b : a)) : null;
+  const bestLiveScore = topCandidate?.score ?? 0;
+  const scoreDelta = prevScoreRef.current === null ? 0 : bestLiveScore - prevScoreRef.current;
   const SCAN_INTERVAL_MS = 5 * 60 * 1000;
   const msSinceLastScan = lastScan ? now - new Date(lastScan.startedAt).getTime() : null;
   const msUntilNextScan = msSinceLastScan === null ? null : Math.max(0, SCAN_INTERVAL_MS - msSinceLastScan);
@@ -246,6 +253,11 @@ export default function Home() {
           <HudStrip
             threshold={insights?.threshold ?? 60}
             liveScore={bestLiveScore}
+            scoreDelta={scoreDelta}
+            topTicker={topCandidate?.ticker ?? null}
+            topBand={topCandidate?.scoreBand ?? null}
+            topStatus={topCandidate?.status ?? null}
+            evaluatedThisScan={lastScan?.candidatesEvaluated ?? 0}
             sourceCount={insights?.provenance.providerCount ?? 0}
             sourceCoverageFraction={sourceCoverageFraction}
             nextScanCountdown={nextScanCountdown}
@@ -504,8 +516,9 @@ function TickRule() {
 // labeled mini-dial pills packed edge to edge (no medallion dead space).
 // The dial's ring/needle track the real highest-scoring candidate from this
 // session; the red mark is the fixed real 60-point qualification gate.
-function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, nextScanCountdown, scanCycleFraction, liveOrderCount, orderFraction, collectorHealthy, collectorFraction }: {
-  threshold: number; liveScore: number; sourceCount: number; sourceCoverageFraction: number;
+function HudStrip({ threshold, liveScore, scoreDelta, topTicker, topBand, topStatus, evaluatedThisScan, sourceCount, sourceCoverageFraction, nextScanCountdown, scanCycleFraction, liveOrderCount, orderFraction, collectorHealthy, collectorFraction }: {
+  threshold: number; liveScore: number; scoreDelta: number; topTicker: string | null; topBand: string | null; topStatus: string | null; evaluatedThisScan: number;
+  sourceCount: number; sourceCoverageFraction: number;
   nextScanCountdown: string; scanCycleFraction: number; liveOrderCount: number; orderFraction: number;
   collectorHealthy: boolean | null; collectorFraction: number;
 }) {
@@ -517,9 +530,23 @@ function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, n
   return (
     <div className="hud-strip" aria-label={`Live best candidate score ${liveScore.toFixed(0)}, versus a ${threshold}-point qualification gate`}>
       <div className="hud-strip-readout">
-        <span className="hud-strip-eyebrow">[ LIVE SCORE ]</span>
-        <div className="hud-strip-value"><b>{liveScore.toFixed(0)}</b><small>/ 100</small></div>
-        <span className={`hud-strip-sub ${gap >= 0 ? "over" : ""}`}>{gap >= 0 ? `+${gap.toFixed(0)} over the ${threshold}-point gate` : `${Math.abs(gap).toFixed(0)} short of the ${threshold}-point gate`}</span>
+        <div className="hud-strip-headline">
+          <TrendGlyph delta={scoreDelta} />
+          <div className="hud-strip-value"><b>{liveScore.toFixed(0)}</b></div>
+          <div className="hud-strip-meta">
+            <span className="hud-strip-eyebrow">LIVE SCORE</span>
+            <span>{topTicker ? `${topTicker} · BAND ${topBand}` : "no candidate yet"}</span>
+            <span>{topStatus ?? "—"}</span>
+          </div>
+        </div>
+        <div className="hud-strip-track">
+          <div className="hud-strip-track-line"><i /><i /></div>
+          <span>
+            {gap >= 0 ? `+${gap.toFixed(0)} over the ${threshold}-point gate` : `${Math.abs(gap).toFixed(0)} short of the ${threshold}-point gate`}
+            {" · "}{evaluatedThisScan} evaluated this scan
+            {scoreDelta !== 0 && ` · ${scoreDelta > 0 ? "+" : ""}${scoreDelta.toFixed(0)} vs last scan`}
+          </span>
+        </div>
       </div>
       <div className="hud-strip-dial">
         <svg viewBox="0 0 200 200" className="hud-strip-svg">
@@ -545,6 +572,21 @@ function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, n
         <span><MiniDial fraction={orderFraction} /><b>{liveOrderCount.toString().padStart(2, "0")}</b> LIVE ORDERS</span>
       </div>
     </div>
+  );
+}
+
+// Trend node — the small connector-node icon from the FUSION reference's
+// "005" panel, repurposed as a real up/down/flat indicator for the score's
+// change since the last scan instead of a static decoration.
+function TrendGlyph({ delta }: { delta: number }) {
+  const dir = delta > 0.5 ? 1 : delta < -0.5 ? -1 : 0;
+  return (
+    <svg viewBox="0 0 28 28" className="trend-glyph" aria-label={dir > 0 ? "Score rising" : dir < 0 ? "Score falling" : "Score flat"}>
+      <circle cx="14" cy="14" r="11" />
+      {dir !== 0
+        ? <path d={dir > 0 ? "M9 16 L14 10 L19 16" : "M9 12 L14 18 L19 12"} className={dir > 0 ? "up" : "down"} />
+        : <line x1="9" y1="14" x2="19" y2="14" />}
+    </svg>
   );
 }
 

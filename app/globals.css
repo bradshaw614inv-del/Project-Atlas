@@ -202,13 +202,24 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
    static beads OR a small tick-and-needle instrument, never a glowing arc —
    the reference has no such thing, so neither does this. */
 .hud-strip { display: flex; align-items: stretch; border: 1px solid var(--accent-soft); background: var(--card); }
-.hud-strip-readout { flex: 1 1 auto; min-width: 170px; padding: 16px 22px; display: flex; flex-direction: column; justify-content: center; gap: 5px; border-right: 1px solid var(--accent-soft); }
-.hud-strip-eyebrow { font: 700 8px var(--font-geist-mono, monospace); letter-spacing: .18em; color: var(--accent); }
-.hud-strip-value { display: flex; align-items: baseline; gap: 6px; }
-.hud-strip-value b { font: 700 48px/1 var(--font-geist-mono, monospace); color: var(--accent-text); }
-.hud-strip-value small { font: 700 11px var(--font-geist-mono, monospace); color: var(--faint); }
-.hud-strip-sub { font: 11px var(--font-geist-mono, monospace); color: var(--subtle); }
-.hud-strip-sub.over { color: var(--success); }
+.hud-strip-readout { flex: 1 1 auto; min-width: 220px; padding: 16px 22px; display: flex; flex-direction: column; justify-content: center; gap: 10px; border-right: 1px solid var(--accent-soft); }
+.hud-strip-headline { display: flex; align-items: center; gap: 12px; }
+.hud-strip-eyebrow { display: block; font: 700 8px var(--font-geist-mono, monospace); letter-spacing: .18em; color: var(--accent); }
+.hud-strip-value { display: flex; align-items: baseline; }
+.hud-strip-value b { font: 700 44px/1 var(--font-geist-mono, monospace); color: var(--accent-text); }
+.hud-strip-meta { display: flex; flex-direction: column; gap: 3px; }
+.hud-strip-meta span:nth-child(2) { font: 700 11px var(--font-geist-mono, monospace); color: var(--accent-text); letter-spacing: .02em; }
+.hud-strip-meta span:nth-child(3) { font: 9px var(--font-geist-mono, monospace); color: var(--faint); letter-spacing: .06em; text-transform: uppercase; }
+.trend-glyph { width: 26px; height: 26px; flex-shrink: 0; }
+.trend-glyph circle { fill: none; stroke: var(--accent-soft); stroke-width: 1.2; }
+.trend-glyph path, .trend-glyph line { fill: none; stroke: var(--faint); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.trend-glyph path.up { stroke: var(--success); }
+.trend-glyph path.down { stroke: var(--danger); }
+.hud-strip-track-line { position: relative; height: 1px; background: var(--accent-soft); margin: 0 6px 6px; }
+.hud-strip-track-line i { position: absolute; top: 50%; transform: translateY(-50%); width: 5px; height: 5px; border-radius: 50%; border: 1px solid var(--accent-soft); background: var(--card); }
+.hud-strip-track-line i:first-child { left: -6px; }
+.hud-strip-track-line i:last-child { right: 30%; }
+.hud-strip-track span { font: 10px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .03em; }
 .hud-strip-dial { position: relative; flex: 0 0 130px; display: grid; place-items: center; border-right: 1px solid var(--accent-soft); }
 .hud-strip-svg { width: 104px; height: 104px; }
 .hud-gauge-beads circle { fill: var(--accent); }
