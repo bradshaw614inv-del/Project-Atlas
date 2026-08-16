@@ -209,71 +209,54 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
 .secondary:hover, .live-btn:hover, .primary:hover { box-shadow: 0 0 28px color-mix(in srgb, var(--accent-glow) 45%, transparent); }
 .secondary:disabled { opacity: .55; cursor: default; }
 
-.hero-telemetry { display: flex; align-items: center; gap: 30px; position: relative; z-index: 2; }
+.hero-telemetry { position: relative; z-index: 2; }
 
-/* HUD gauge — a projected hologram: layered glow, slow independent rotation on
-   two rings, a gentle float/tilt, and text that curves with the dial itself. */
-.hud-gauge {
-  position: relative; width: 180px; height: 180px; flex: 0 0 auto;
-  animation: gauge-float 5s ease-in-out infinite;
+/* HUD strip — a wide instrument panel (not a medallion with dead space
+   around it), matching the FUSION reference's flat schematic strips: a live
+   readout, a compact beaded dial, and labeled pills, packed edge to edge. */
+.hud-strip { display: flex; align-items: stretch; border: 1px solid var(--accent-soft); background: linear-gradient(90deg, color-mix(in srgb, var(--accent-panel) 30%, transparent), transparent 70%); }
+.hud-strip-readout { flex: 1 1 auto; min-width: 170px; padding: 16px 22px; display: flex; flex-direction: column; justify-content: center; gap: 5px; border-right: 1px solid var(--accent-soft); }
+.hud-strip-eyebrow { font: 700 8px var(--font-geist-mono, monospace); letter-spacing: .18em; color: var(--accent); }
+.hud-strip-value { display: flex; align-items: baseline; gap: 6px; }
+.hud-strip-value b {
+  font: 500 52px/1 var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text);
+  text-shadow: 0 0 6px var(--accent), 0 0 18px color-mix(in srgb, var(--accent-glow) 55%, transparent);
 }
-.hud-gauge-beam {
-  position: absolute; left: 50%; bottom: -14px; width: 118px; height: 150px; transform: translateX(-50%);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 20%, transparent), transparent 82%);
-  clip-path: polygon(38% 0, 62% 0, 100% 100%, 0 100%);
-  filter: blur(1px); z-index: -1; animation: beam-flicker 3.6s ease-in-out infinite;
-}
-.hud-gauge-svg {
-  width: 100%; height: 100%;
-  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-glow) 55%, transparent)) drop-shadow(0 0 26px color-mix(in srgb, var(--accent-glow) 30%, transparent));
+.hud-strip-value small { font: 700 11px var(--font-geist-mono, monospace); color: var(--faint); }
+.hud-strip-sub { font: 11px var(--font-geist-mono, monospace); color: var(--subtle); }
+.hud-strip-sub.over { color: var(--success); }
+.hud-strip-dial { position: relative; flex: 0 0 130px; display: grid; place-items: center; border-right: 1px solid var(--accent-soft); }
+.hud-strip-svg {
+  width: 104px; height: 104px;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent-glow) 45%, transparent));
 }
 .hud-gauge-track { fill: none; stroke: color-mix(in srgb, var(--accent) 16%, transparent); stroke-width: 2; }
-.hud-gauge-fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dasharray .6s ease; }
-.hud-gauge-inner { fill: color-mix(in srgb, var(--accent-panel) 45%, transparent); stroke: color-mix(in srgb, var(--accent) 26%, transparent); stroke-width: 1; }
-.hud-gauge-ticks line { stroke: color-mix(in srgb, var(--accent) 32%, transparent); stroke-width: 1.5; }
-.hud-gauge-spin { transform-origin: 100px 100px; animation: hud-spin 16s linear infinite; }
-.hud-gauge-spin-ring { fill: none; stroke: color-mix(in srgb, var(--accent) 45%, transparent); stroke-width: 1; stroke-dasharray: 2 7; }
-.hud-gauge-label {
-  fill: color-mix(in srgb, var(--accent) 85%, transparent); font: 700 8px var(--font-geist-mono, monospace); letter-spacing: 3.5px;
-}
-.hud-gauge-core {
-  position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
-}
-.hud-gauge-core b {
-  display: block; font: 500 50px/1 var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text);
-  text-shadow: 0 0 6px var(--accent), 0 0 18px color-mix(in srgb, var(--accent-glow) 70%, transparent), 0 0 42px color-mix(in srgb, var(--accent-glow) 35%, transparent);
-}
-.hud-gauge-corner { position: absolute; width: 16px; height: 16px; border: 1px solid color-mix(in srgb, var(--accent) 60%, transparent); filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-glow) 40%, transparent)); }
-.hud-gauge-corner.tl { top: -6px; left: -6px; border-right: 0; border-bottom: 0; }
-.hud-gauge-corner.tr { top: -6px; right: -6px; border-left: 0; border-bottom: 0; }
-.hud-gauge-corner.bl { bottom: -6px; left: -6px; border-right: 0; border-top: 0; }
-.hud-gauge-corner.br { bottom: -6px; right: -6px; border-left: 0; border-top: 0; }
-.hud-gauge::after {
-  content: ""; position: absolute; inset: -22px; border-radius: 50%; pointer-events: none; z-index: -1;
-  background: radial-gradient(circle, color-mix(in srgb, var(--accent-glow) 22%, transparent) 0%, transparent 66%);
-  animation: gauge-breathe 3.2s ease-in-out infinite;
-}
-.telemetry-stack { display: grid; gap: 8px; }
+.hud-gauge-fill { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linecap: round; transition: stroke-dasharray .8s cubic-bezier(.4,0,.2,1); }
+.hud-gauge-beads circle { fill: color-mix(in srgb, var(--accent) 65%, transparent); }
+.hud-gauge-threshold-mark line { stroke: var(--danger); stroke-width: 3; stroke-linecap: round; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--danger) 60%, transparent)); }
+.hud-gauge-needle { transition: transform .8s cubic-bezier(.4,0,.2,1); }
+.hud-gauge-needle line { stroke: var(--accent-text); stroke-width: 2; }
+.hud-gauge-needle circle { fill: var(--accent-text); filter: drop-shadow(0 0 5px var(--accent-glow)); }
+.hud-strip-dial-core { position: absolute; display: grid; place-items: center; text-align: center; gap: 1px; }
+.hud-strip-dial-core b { font: 600 22px var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text); }
+.hud-strip-dial-core small { display: block; font: 700 7px var(--font-geist-mono, monospace); letter-spacing: .1em; color: var(--faint); text-transform: uppercase; }
+.hud-strip-pills { flex: 0 0 190px; display: flex; flex-direction: column; justify-content: center; gap: 7px; padding: 12px 16px; }
 .telemetry-stack span {
-  position: relative; display: flex; align-items: baseline; gap: 6px; padding: 8px 22px 8px 14px; border-radius: 999px;
-  border: 1px solid var(--accent-soft); background: linear-gradient(90deg, color-mix(in srgb, var(--accent-panel) 55%, transparent), transparent);
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 999px;
+  border: 1px solid var(--accent-soft); background: color-mix(in srgb, var(--accent-panel) 40%, transparent);
   font: 7px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .1em;
 }
-.telemetry-stack span::after {
-  content: ""; position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 6px; height: 6px; border-radius: 50%;
-  background: var(--accent); box-shadow: 0 0 7px var(--accent-glow);
-}
-.telemetry-stack b { font: 600 15px var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text); text-shadow: 0 0 10px color-mix(in srgb, var(--accent-glow) 40%, transparent); }
+.telemetry-stack b { font: 600 13px var(--font-display, var(--font-geist-mono), monospace); color: var(--accent-text); text-shadow: 0 0 8px color-mix(in srgb, var(--accent-glow) 40%, transparent); }
+.mini-dial { width: 16px; height: 16px; flex-shrink: 0; }
+.mini-dial-tick { stroke: color-mix(in srgb, var(--accent) 40%, transparent); stroke-width: 1.4; }
+.mini-dial-face { fill: none; stroke: var(--accent-soft); stroke-width: 1; }
+.mini-dial-needle { transition: transform .5s cubic-bezier(.4,0,.2,1); }
+.mini-dial-needle line { stroke: var(--accent-text); stroke-width: 1.6; }
+.mini-dial-hub { fill: var(--accent); }
 
 /* ============================================================
    HOW-TO + SETTINGS
    ============================================================ */
-/* Circuit-node cluster — small connected dots, lifted from the FRS logo-concept
-   reference. A quiet decorative divider between major sections. */
-.circuit-nodes { display: block; width: 220px; height: 135px; margin: 20px auto; opacity: .8; }
-.circuit-nodes-edges line { stroke: color-mix(in srgb, var(--accent) 40%, transparent); stroke-width: .6; }
-.circuit-nodes-dots circle { fill: var(--accent); opacity: .9; filter: drop-shadow(0 0 3px color-mix(in srgb, var(--accent-glow) 50%, transparent)); }
-
 /* Tick-mark ruler — thin measured rule, lifted from the FUSION reference panel. */
 .tick-rule { max-width: 1500px; margin: auto; height: 8px; border-bottom: 1px solid var(--accent-soft); background: repeating-linear-gradient(90deg, var(--accent-soft) 0 1px, transparent 1px 24px); background-repeat: repeat-x; background-size: 100% 8px; opacity: .65; }
 
@@ -453,6 +436,29 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
 .dot-matrix-cells i.on { background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent-glow) 55%, transparent); }
 .dot-matrix-col small { overflow: hidden; color: var(--faint); font: 7px var(--font-geist-mono, monospace); white-space: nowrap; }
 
+/* Knowledge graph — the connected-dots motif from the FRS logo sheet, bound
+   to Atlas's real ticker/regime/catalyst graph. Node size = real edge count. */
+.knowledge-graph { border: 1px solid var(--accent-soft); background: var(--card); padding: 10px 12px 0; }
+.knowledge-graph-empty { padding: 16px 0; color: var(--faint); font-size: 12px; }
+.knowledge-graph-svg { display: block; width: 100%; height: 220px; }
+.knowledge-graph-edges line { stroke: var(--accent); transition: opacity .3s ease; }
+.kg-node circle { fill: var(--accent); cursor: pointer; transition: r .2s ease, filter .2s ease; filter: drop-shadow(0 0 2px color-mix(in srgb, var(--accent-glow) 40%, transparent)); }
+.kg-node.active circle, .kg-node:hover circle { filter: drop-shadow(0 0 8px var(--accent-glow)); }
+.kg-node.kg-regime circle { fill: var(--danger); }
+.kg-node.kg-catalyst circle { fill: var(--asset-2, var(--accent)); }
+.kg-node.kg-sector circle { fill: var(--asset-3, var(--accent)); }
+.knowledge-graph-legend { display: flex; gap: 14px; padding: 8px 0; font: 700 8px var(--font-geist-mono, monospace); letter-spacing: .1em; color: var(--faint); }
+.knowledge-graph-legend span { position: relative; padding-left: 14px; }
+.knowledge-graph-legend span::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.knowledge-graph-legend span.kg-regime::before { background: var(--danger); }
+.knowledge-graph-legend span.kg-catalyst::before { background: var(--asset-2, var(--accent)); }
+.knowledge-graph-legend span.kg-sector::before { background: var(--asset-3, var(--accent)); }
+.knowledge-graph-detail { border-top: 1px solid var(--accent-soft); padding: 10px 0; display: grid; gap: 4px; min-height: 44px; }
+.knowledge-graph-detail b { font-size: 13px; color: var(--accent-text); }
+.knowledge-graph-detail span { font: 8px var(--font-geist-mono, monospace); letter-spacing: .08em; color: var(--accent); text-transform: uppercase; }
+.knowledge-graph-detail span.hint { color: var(--faint); text-transform: none; letter-spacing: normal; font-family: inherit; font-size: 11px; }
+.knowledge-graph-detail small { font-size: 10px; color: var(--faint); line-height: 1.5; }
+
 .evidence-stream { margin-top: 22px; }
 .evidence-stream-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 6px; flex-wrap: wrap; }
 .evidence-stream-head h3 { margin: 5px 0 0; font-size: 18px; }
@@ -478,16 +484,18 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
    ANIMATIONS
    ============================================================ */
 @keyframes pulse-beat { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
-@keyframes gauge-breathe { 0%, 100% { opacity: .7; transform: scale(1); } 50% { opacity: 1; transform: scale(1.06); } }
 @media (prefers-reduced-motion: reduce) {
-  .pulse, .hud-gauge::after { animation: none !important; }
+  .pulse { animation: none !important; }
 }
 
 /* ============================================================
    RESPONSIVE
    ============================================================ */
 @media (max-width: 980px) {
-  .hero-telemetry { width: 100%; justify-content: flex-start; }
+  .hero-telemetry { width: 100%; }
+  .hud-strip { flex-wrap: wrap; }
+  .hud-strip-readout, .hud-strip-dial { flex: 1 1 50%; }
+  .hud-strip-pills { flex: 1 1 100%; flex-direction: row; flex-wrap: wrap; border-top: 1px solid var(--accent-soft); }
 }
 @media (max-width: 850px) {
   .account-strip { grid-template-columns: 1fr; }
@@ -525,6 +533,7 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
   .modal form { grid-template-columns: 1fr; }
   .modal .wide, .form-actions { grid-column: auto; }
   footer { padding: 18px; display: grid; gap: 8px; }
-  .hud-gauge { width: 130px; height: 130px; }
-  .hud-gauge-core b { font-size: 34px; }
+  .hud-strip { flex-wrap: wrap; }
+  .hud-strip-readout, .hud-strip-dial { flex: 1 1 100%; border-right: 0; border-bottom: 1px solid var(--accent-soft); }
+  .hud-strip-value b { font-size: 40px; }
 }

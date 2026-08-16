@@ -43,7 +43,9 @@ type Candidate = {
   scoreBand: string; nearMiss: number; analystScore: number; skepticPenalty: number;
   signals: { key: string; label: string; score: number; max: number; evidence: string }[];
 };
-type Insights = { threshold: number; provenance: { providerCount: number; providers: string[]; outletCount: number; outlets: string[]; traceableStories: number; storiesChecked: number; sourceRoles?: { name: string; role: string; status: string }[] }; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: unknown[]; edges: unknown[] } };
+type KGNode = { id: number; key: string; type: string; label: string; metadata: string };
+type KGEdge = { id: number; fromKey: string; toKey: string; relation: string; weight: number; evidenceCount: number };
+type Insights = { threshold: number; provenance: { providerCount: number; providers: string[]; outletCount: number; outlets: string[]; traceableStories: number; storiesChecked: number; sourceRoles?: { name: string; role: string; status: string }[] }; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: KGNode[]; edges: KGEdge[] } };
 
 function money(n: number, digits = 2) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
@@ -206,6 +208,16 @@ export default function Home() {
   const riskPerTradePct = account?.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT;
   const weatherClass = weather?.classification === "TRADE_ELIGIBLE" ? "eligible" : weather?.classification === "SIT_OUT" ? "sitout" : "caution";
 
+  const bestLiveScore = candidates.length ? Math.max(...candidates.map((c) => c.score)) : 0;
+  const SCAN_INTERVAL_MS = 5 * 60 * 1000;
+  const msSinceLastScan = lastScan ? now - new Date(lastScan.startedAt).getTime() : null;
+  const msUntilNextScan = msSinceLastScan === null ? null : Math.max(0, SCAN_INTERVAL_MS - msSinceLastScan);
+  const nextScanCountdown = msUntilNextScan === null ? "—M" : `${String(Math.floor(msUntilNextScan / 60000)).padStart(2, "0")}:${String(Math.floor((msUntilNextScan % 60000) / 1000)).padStart(2, "0")}`;
+  const scanCycleFraction = msUntilNextScan === null ? 0 : 1 - msUntilNextScan / SCAN_INTERVAL_MS;
+  const sourceCoverageFraction = insights && insights.provenance.storiesChecked > 0 ? insights.provenance.traceableStories / insights.provenance.storiesChecked : 0;
+  const liveOrderCount = openPositions.filter((p) => !p.shadow).length;
+  const orderFraction = maxOpenPositions > 0 ? liveOrderCount / maxOpenPositions : 0;
+
   return (
     <main>
       <header className="topbar">
@@ -219,20 +231,22 @@ export default function Home() {
       <section className="truth-banner accent-rose"><strong>REAL INPUTS · PAPER OUTCOMES</strong><span>Stocks, Robinhood-supported crypto assets, news, timestamps, and market quotes must be real and source-traceable. Crypto scanning is restricted to BTC, ETH, SOL, and XRP. Only the paper execution and its calculated return or loss are simulated.</span></section>
       <section className={`collection-health accent-rose ${collectionHealth?.healthy ? "healthy" : "stale"}`}><strong>{collectionHealth?.healthy ? "COLLECTOR HEALTHY" : "COLLECTOR NEEDS ATTENTION"}</strong><span>{lastScan ? `Last scan ${timeAgo(lastScan.startedAt)} · ${collectionHealth?.totalRecentStories ?? 0} new stories and ${collectionHealth?.totalRecentCandidates ?? 0} scored observations across the last ${collectionHealth?.recentScans.length ?? 0} scans.` : "Waiting for the first verified collection scan."}</span><small>Each scan checks one day of real company news and permanently builds history forward. Because the verified free feed arrives hours late, Atlas may score stories up to six hours old, but still requires 60+, a consecutive scan, and no price chasing.</small></section>
 
-      <section className="hero forward-hero accent-rose">
+      <section className="hero forward-hero">
         <div><p className="eyebrow">OBSERVATION MODE · PAPER TRADES ONLY</p><h1>Atlas watches.<br /><em>Atlas learns from evidence.</em></h1><p className="lede">Every 5 minutes Atlas collects real stock and crypto news with real observed quotes. It records every observation, then simulates only the resulting paper profit or loss—never the facts behind it.</p></div>
-        <div className="hero-telemetry" aria-hidden="true">
-          <HudGauge value={insights?.threshold ?? 60} />
-          <div className="telemetry-stack">
-            <span><b>{insights?.provenance.providerCount ?? "—"}</b> SOURCES</span>
-            <span><b>05M</b> CYCLE</span>
-            <span><b>{openPositions.filter((p) => !p.shadow).length.toString().padStart(2, "0")}</b> LIVE ORDERS</span>
-          </div>
+        <div className="hero-telemetry">
+          <HudStrip
+            threshold={insights?.threshold ?? 60}
+            liveScore={bestLiveScore}
+            sourceCount={insights?.provenance.providerCount ?? 0}
+            sourceCoverageFraction={sourceCoverageFraction}
+            nextScanCountdown={nextScanCountdown}
+            scanCycleFraction={scanCycleFraction}
+            liveOrderCount={liveOrderCount}
+            orderFraction={orderFraction}
+          />
         </div>
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
       </section>
-
-      <CircuitNodes />
 
       <section className="howto">
         <h2>How to read this page</h2>
@@ -340,6 +354,10 @@ export default function Home() {
             title: `${point.ticker} · ${point.score.toFixed(0)} · ${displayDate(point.scanAt)}`,
           }))} />
         </div>
+        <div className="dot-matrix-panel">
+          <span>[ KNOWLEDGE GRAPH — REAL TICKER / REGIME / CATALYST LINKS · HOVER OR TAP A NODE ]</span>
+          <KnowledgeGraph nodes={insights?.knowledgeGraph.nodes ?? []} edges={insights?.knowledgeGraph.edges ?? []} />
+        </div>
       </section>
 
       <section className="source-panel" aria-labelledby="source-title">
@@ -394,22 +412,83 @@ function CandidateRow({ c }: { c: Candidate }) {
   </article>;
 }
 
-const CIRCUIT_NODES: [number, number, number][] = [
-  [10, 20, 5], [28, 12, 7], [46, 22, 4], [64, 14, 6], [82, 24, 5],
-  [16, 42, 4], [34, 50, 6], [52, 40, 5], [70, 48, 4], [88, 40, 5],
-];
-const CIRCUIT_EDGES: [number, number][] = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [1, 6], [2, 6], [3, 7], [4, 8], [6, 7], [7, 8], [8, 9], [5, 6]];
+// Knowledge-graph visualization — the connected-dots motif from the FRS logo
+// sheet, but bound to Atlas's real ticker/regime/catalyst graph instead of
+// tracing a static shape. Nodes cluster by type; size reflects real edge
+// count; hover or tap a node to trace its actual observed relationships.
+function KnowledgeGraph({ nodes, edges }: { nodes: KGNode[]; edges: KGEdge[] }) {
+  const [selected, setSelected] = useState<string | null>(null);
 
-function CircuitNodes({ className = "" }: { className?: string }) {
+  if (nodes.length === 0) return <p className="knowledge-graph-empty">No knowledge-graph relationships recorded yet — this fills in as Atlas scans.</p>;
+
+  const degree = new Map<string, number>();
+  for (const e of edges) {
+    degree.set(e.fromKey, (degree.get(e.fromKey) ?? 0) + 1);
+    degree.set(e.toKey, (degree.get(e.toKey) ?? 0) + 1);
+  }
+  const byType = new Map<string, KGNode[]>();
+  for (const n of nodes) {
+    const group = byType.get(n.type) ?? [];
+    group.push(n);
+    byType.set(n.type, group);
+  }
+  const typeOrder = Array.from(byType.keys()).sort();
+  const width = 640, height = 300;
+  const positions = new Map<string, { x: number; y: number }>();
+  typeOrder.forEach((type, ti) => {
+    const group = byType.get(type)!.sort((a, b) => (degree.get(b.key) ?? 0) - (degree.get(a.key) ?? 0));
+    const colX = ((ti + 0.5) / typeOrder.length) * width;
+    group.forEach((n, ni) => positions.set(n.key, { x: colX, y: ((ni + 0.5) / group.length) * height }));
+  });
+  const maxDegree = Math.max(1, ...Array.from(degree.values()));
+  const selectedNode = selected ? nodes.find((n) => n.key === selected) : null;
+  const selectedConnections = selectedNode
+    ? edges.filter((e) => e.fromKey === selected || e.toKey === selected)
+      .map((e) => nodes.find((n) => n.key === (e.fromKey === selected ? e.toKey : e.fromKey))?.label ?? "")
+      .filter(Boolean)
+    : [];
+
   return (
-    <svg viewBox="0 0 98 60" className={`circuit-nodes ${className}`} aria-hidden="true">
-      <g className="circuit-nodes-edges">
-        {CIRCUIT_EDGES.map(([a, b], i) => <line key={i} x1={CIRCUIT_NODES[a][0]} y1={CIRCUIT_NODES[a][1]} x2={CIRCUIT_NODES[b][0]} y2={CIRCUIT_NODES[b][1]} />)}
-      </g>
-      <g className="circuit-nodes-dots">
-        {CIRCUIT_NODES.map(([x, y, r], i) => <circle key={i} cx={x} cy={y} r={r} />)}
-      </g>
-    </svg>
+    <div className="knowledge-graph">
+      <svg viewBox={`0 0 ${width} ${height}`} className="knowledge-graph-svg">
+        <g className="knowledge-graph-edges">
+          {edges.map((e) => {
+            const a = positions.get(e.fromKey), b = positions.get(e.toKey);
+            if (!a || !b) return null;
+            const active = selected != null && (e.fromKey === selected || e.toKey === selected);
+            return <line key={e.id} x1={a.x} y1={a.y} x2={b.x} y2={b.y} className={active ? "active" : ""} style={{ opacity: selected ? (active ? 0.85 : 0.05) : Math.min(0.45, 0.1 + e.weight * 0.08) }} />;
+          })}
+        </g>
+        <g className="knowledge-graph-nodes">
+          {nodes.map((n) => {
+            const pos = positions.get(n.key);
+            if (!pos) return null;
+            const r = 3.5 + ((degree.get(n.key) ?? 0) / maxDegree) * 9;
+            return (
+              <g
+                key={n.id} transform={`translate(${pos.x} ${pos.y})`}
+                className={`kg-node kg-${n.type.toLowerCase()} ${selected === n.key ? "active" : ""}`}
+                onMouseEnter={() => setSelected(n.key)}
+                onMouseLeave={() => setSelected((s) => (s === n.key ? null : s))}
+                onClick={() => setSelected((s) => (s === n.key ? null : n.key))}
+                tabIndex={0} role="button" aria-label={`${n.label}, ${n.type}, ${degree.get(n.key) ?? 0} connections`}
+              >
+                <circle r={r} />
+                <title>{`${n.label} (${n.type}) — ${degree.get(n.key) ?? 0} real connections`}</title>
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+      <div className="knowledge-graph-legend">
+        {typeOrder.map((type) => <span key={type} className={`kg-${type.toLowerCase()}`}>{type}</span>)}
+      </div>
+      <div className="knowledge-graph-detail">
+        {selectedNode
+          ? <><b>{selectedNode.label}</b><span>{selectedNode.type} · {selectedConnections.length} real relationships observed</span><small>{selectedConnections.slice(0, 14).join(" · ") || "No linked nodes yet."}</small></>
+          : <span className="hint">{nodes.length} real nodes · {edges.length} real edges, built from actual scan history</span>}
+      </div>
+    </div>
   );
 }
 
@@ -417,36 +496,76 @@ function TickRule() {
   return <div className="tick-rule" aria-hidden="true" />;
 }
 
-function HudGauge({ value }: { value: number }) {
+// Wide instrument strip — a live readout, a compact beaded dial, and
+// labeled mini-dial pills packed edge to edge (no medallion dead space).
+// The dial's ring/needle track the real highest-scoring candidate from this
+// session; the red mark is the fixed real 60-point qualification gate.
+function HudStrip({ threshold, liveScore, sourceCount, sourceCoverageFraction, nextScanCountdown, scanCycleFraction, liveOrderCount, orderFraction }: {
+  threshold: number; liveScore: number; sourceCount: number; sourceCoverageFraction: number;
+  nextScanCountdown: string; scanCycleFraction: number; liveOrderCount: number; orderFraction: number;
+}) {
   const radius = 82;
   const circumference = 2 * Math.PI * radius;
-  const fillLength = (Math.min(value, 100) / 100) * circumference;
+  const scoreFraction = Math.max(0, Math.min(100, liveScore)) / 100;
+  const fillLength = scoreFraction * circumference;
+  const needleRotation = scoreFraction * 360;
+  const thresholdRotation = (Math.max(0, Math.min(100, threshold)) / 100) * 360;
+  const beadCount = 44;
+  const gap = liveScore - threshold;
   return (
-    <div className="hud-gauge" aria-label={`Atlas qualification threshold: ${value} points`}>
-      <i className="hud-gauge-beam" aria-hidden="true" />
-      <svg viewBox="0 0 200 200" className="hud-gauge-svg">
-        <defs>
-          <path id="hud-arc-top" d="M 28 100 A 72 72 0 0 1 172 100" />
-          <path id="hud-arc-bottom" d="M 28 100 A 72 72 0 0 0 172 100" />
-        </defs>
-        <circle cx="100" cy="100" r={radius} className="hud-gauge-track" transform="rotate(-90 100 100)" />
-        <circle
-          cx="100" cy="100" r={radius} className="hud-gauge-fill" transform="rotate(-90 100 100)"
-          style={{ strokeDasharray: `${fillLength} ${circumference}` }}
-        />
-        <g className="hud-gauge-spin"><circle cx="100" cy="100" r="74" className="hud-gauge-spin-ring" /></g>
-        <circle cx="100" cy="100" r="60" className="hud-gauge-inner" />
-        <g className="hud-gauge-ticks">
-          {Array.from({ length: 36 }).map((_, i) => (
-            <line key={i} x1="100" y1="10" x2="100" y2="18" transform={`rotate(${i * 10} 100 100)`} />
-          ))}
-        </g>
-        <text className="hud-gauge-label"><textPath href="#hud-arc-top" startOffset="50%" textAnchor="middle">THRESHOLD</textPath></text>
-        <text className="hud-gauge-label"><textPath href="#hud-arc-bottom" startOffset="50%" textAnchor="middle">QUALIFY</textPath></text>
-      </svg>
-      <div className="hud-gauge-core"><b>{value}</b></div>
-      <i className="hud-gauge-corner tl" /><i className="hud-gauge-corner tr" /><i className="hud-gauge-corner bl" /><i className="hud-gauge-corner br" />
+    <div className="hud-strip" aria-label={`Live best candidate score ${liveScore.toFixed(0)}, versus a ${threshold}-point qualification gate`}>
+      <div className="hud-strip-readout">
+        <span className="hud-strip-eyebrow">[ LIVE SCORE ]</span>
+        <div className="hud-strip-value"><b>{liveScore.toFixed(0)}</b><small>/ 100</small></div>
+        <span className={`hud-strip-sub ${gap >= 0 ? "over" : ""}`}>{gap >= 0 ? `+${gap.toFixed(0)} over the ${threshold}-point gate` : `${Math.abs(gap).toFixed(0)} short of the ${threshold}-point gate`}</span>
+      </div>
+      <div className="hud-strip-dial">
+        <svg viewBox="0 0 200 200" className="hud-strip-svg">
+          <circle cx="100" cy="100" r={radius} className="hud-gauge-track" transform="rotate(-90 100 100)" />
+          <circle
+            cx="100" cy="100" r={radius} className="hud-gauge-fill" transform="rotate(-90 100 100)"
+            style={{ strokeDasharray: `${fillLength} ${circumference}` }}
+          />
+          <g className="hud-gauge-beads">
+            {Array.from({ length: beadCount }).map((_, i) => (
+              <circle key={i} cx="100" cy="12" r="2.2" transform={`rotate(${(i * 360) / beadCount} 100 100)`} />
+            ))}
+          </g>
+          <g className="hud-gauge-threshold-mark" transform={`rotate(${thresholdRotation} 100 100)`}>
+            <line x1="100" y1="16" x2="100" y2="30" />
+          </g>
+          <g className="hud-gauge-needle" style={{ transform: `rotate(${needleRotation}deg)`, transformOrigin: "100px 100px" }}>
+            <line x1="100" y1="100" x2="100" y2="34" />
+            <circle cx="100" cy="34" r="3.6" />
+          </g>
+        </svg>
+        <div className="hud-strip-dial-core"><b>{threshold}</b><small>gate</small></div>
+      </div>
+      <div className="hud-strip-pills telemetry-stack">
+        <span><MiniDial fraction={sourceCoverageFraction} /><b>{sourceCount || "—"}</b> SOURCES</span>
+        <span><MiniDial fraction={scanCycleFraction} /><b>{nextScanCountdown}</b> NEXT SCAN</span>
+        <span><MiniDial fraction={orderFraction} /><b>{liveOrderCount.toString().padStart(2, "0")}</b> LIVE ORDERS</span>
+      </div>
     </div>
+  );
+}
+
+// Small dial-with-needle, lifted directly from the FUSION reference's
+// "VALIDATED ID A0-04" icon — real fraction in, needle moves to match.
+function MiniDial({ fraction }: { fraction: number }) {
+  const f = Math.max(0, Math.min(1, fraction));
+  const angle = f * 270 - 135;
+  return (
+    <svg viewBox="0 0 24 24" className="mini-dial" aria-hidden="true">
+      {Array.from({ length: 9 }).map((_, i) => (
+        <line key={i} x1="12" y1="3" x2="12" y2="5" className="mini-dial-tick" transform={`rotate(${-135 + (i / 8) * 270} 12 12)`} />
+      ))}
+      <circle cx="12" cy="12" r="7" className="mini-dial-face" />
+      <g className="mini-dial-needle" style={{ transform: `rotate(${angle}deg)`, transformOrigin: "12px 12px" }}>
+        <line x1="12" y1="12" x2="12" y2="6" />
+      </g>
+      <circle cx="12" cy="12" r="1.3" className="mini-dial-hub" />
+    </svg>
   );
 }
 
