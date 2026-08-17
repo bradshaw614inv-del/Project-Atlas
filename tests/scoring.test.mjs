@@ -50,3 +50,18 @@ test("a persisted candidate still cannot trade without positive quote confirmati
   assert.equal(result.status, "CAUTION");
   assert.match(result.reason, /quote has not confirmed/i);
 });
+
+// One story, one position. Yahoo tags a single article to many tickers, so
+// without this gate a lone headline opened GOOGL, AMZN and MSFT at once —
+// roughly 60% of the account riding on whether one story was right.
+test("a second ticker cannot open on a story that already holds a slot", () => {
+  const openPositions = [{ ticker: "GOOGL", storyId: 42, shadow: 0 }];
+  const blockedForSameStory = (ticker, storyId) =>
+    openPositions.some((p) => p.ticker === ticker) ||
+    openPositions.some((p) => p.storyId !== null && p.storyId === storyId);
+
+  assert.equal(blockedForSameStory("AMZN", 42), true, "same story must be blocked");
+  assert.equal(blockedForSameStory("MSFT", 42), true, "same story must be blocked");
+  assert.equal(blockedForSameStory("AMZN", 77), false, "a genuinely different story stays eligible");
+  assert.equal(blockedForSameStory("GOOGL", 77), true, "same ticker stays blocked regardless of story");
+});

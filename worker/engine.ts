@@ -558,6 +558,18 @@ async function tryOpenPosition(db: Db, input: {
     await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: a position on this ticker is already open.");
     return false;
   }
+  // One story, one position. News feeds tag a single article to many tickers —
+  // a single "Nvidia strikes deal with OpenAI" piece opened GOOGL, AMZN and
+  // MSFT simultaneously, putting ~60% of the account behind one headline. Those
+  // are not independent bets: if the story is wrong, every position built on it
+  // is wrong together, which defeats the diversification the equal-slot design
+  // assumes. The first ticker to qualify on a story takes the slot; the rest are
+  // recorded as observations with the reason stated.
+  const sameStory = openPositions.find((p) => p.storyId !== null && p.storyId === input.storyId);
+  if (sameStory) {
+    await annotateCandidate(db, input.candidateRow.id, `Qualifies but not taken: ${sameStory.ticker} already holds the slot for this same story — one story, one position.`);
+    return false;
+  }
 
   const lastClosed = await db.select().from(schema.positions)
     .where(and(eq(schema.positions.ticker, input.ticker), eq(schema.positions.status, "CLOSED")))
