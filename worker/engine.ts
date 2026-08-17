@@ -73,19 +73,19 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       }
     }
 
-    // Finnhub's health is judged by whether it actually returned quotes this
-    // scan, not by a separate ping — a key that returns 200 on an unrelated
-    // endpoint while rate-limiting every quote is not a working connection.
-    const finnhubLive = Array.from(finnhubQuotes.values()).filter((quote) => quote?.dp != null).length;
+    // Each connection is judged by whether it delivered the thing Atlas actually
+    // relies on it for this scan, not by a bare ping. Yahoo is measured on real
+    // usable quotes because that is now the price source the engine depends on.
+    const yahooLive = Array.from(universeQuotes.values()).filter((quote) => quote?.dp != null).length;
     const probes = new Map<string, { ok: boolean; detail: string }>([
-      ["Finnhub", { ok: finnhubLive > 0, detail: finnhubLive > 0 ? `${finnhubLive} quotes returned` : "no usable quotes returned this scan" }],
-      ...(["Yahoo Finance", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Press-release wires"] as const)
+      ["Yahoo Finance", { ok: yahooLive >= 10, detail: `${yahooLive} usable quotes` }],
+      ...(["Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Press-release wires"] as const)
         .map((name) => [name, {
           ok: freeSources.health[name] === "LIVE",
           detail: freeSources.health[name] === "LIVE" ? "responding" : "no response",
         }] as [string, { ok: boolean; detail: string }]),
     ]);
-    await recordConnectionHealth(db, probes, now);
+    const criticalDown = await recordConnectionHealth(db, probes, now);
 
     const spy = universeQuotes.get("SPY") ?? null;
     const qqq = universeQuotes.get("QQQ") ?? null;
@@ -291,7 +291,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       await rememberKnowledge(db, ticker, weather.classification, result.signals.find((s) => s.key === "catalyst")?.evidence ?? "Unknown catalyst");
 
       if (result.status === "WATCH" && priceAtScan !== null) {
-        const opened = await tryOpenPosition(db, { candidateRow, storyId: story.id, ticker, priceAtScan, account: currentAccount, weather, now, clock });
+        const opened = await tryOpenPosition(db, { candidateRow, storyId: story.id, ticker, priceAtScan, account: currentAccount, weather, now, clock, criticalDown });
         if (opened) {
           positionsOpened++;
           await db.update(schema.candidates).set({ observationType: "TRADE" }).where(eq(schema.candidates.id, candidateRow.id));
@@ -456,8 +456,11 @@ async function calibrateFromHistory(db: Db, now: Date) {
 // no broker is connected yet, and listing one that doesn't exist would be a
 // fabricated status. Adding it later means adding a probe here, nothing more.
 const CONNECTION_REGISTRY: { name: string; kind: string; critical: boolean }[] = [
-  { name: "Finnhub", kind: "DATA", critical: true },
-  { name: "Yahoo Finance", kind: "DATA", critical: false },
+  // Yahoo is now the sole source of prices and news, so losing it means Atlas
+  // cannot value a position or see a catalyst — genuinely critical. Finnhub is
+  // deliberately absent: its only remaining use is crypto news, and monitoring
+  // a connection Atlas no longer depends on produced a permanent false alarm.
+  { name: "Yahoo Finance", kind: "DATA", critical: true },
   { name: "Nasdaq Trading Halts", kind: "DATA", critical: true },
   { name: "Federal Reserve", kind: "DATA", critical: false },
   { name: "BLS", kind: "DATA", critical: false },
@@ -473,6 +476,7 @@ const FAILURES_BEFORE_DOWN = 2;
 
 async function recordConnectionHealth(db: Db, observed: Map<string, { ok: boolean; detail: string }>, now: Date) {
   const nowIso = now.toISOString();
+  const criticalDown: string[] = [];
   for (const connection of CONNECTION_REGISTRY) {
     const probe = observed.get(connection.name);
     if (!probe) continue;
@@ -491,6 +495,7 @@ async function recordConnectionHealth(db: Db, observed: Map<string, { ok: boolea
     };
     if (existing) await db.update(schema.connectionStatus).set(row).where(eq(schema.connectionStatus.name, connection.name));
     else await db.insert(schema.connectionStatus).values(row);
+    if (connection.critical && status === "DOWN") criticalDown.push(connection.name);
 
     // Only a real transition is an event. Steady state writes nothing.
     if (existing && previousStatus !== status) {
@@ -504,6 +509,7 @@ async function recordConnectionHealth(db: Db, observed: Map<string, { ok: boolea
       });
     }
   }
+  return criticalDown;
 }
 
 async function getOrCreateAccountState(db: Db, tradingDay: string) {
@@ -536,7 +542,16 @@ async function tryOpenPosition(db: Db, input: {
   account: typeof schema.accountState.$inferSelect;
   weather: { classification: string };
   now: Date; clock: MarketClock;
+  criticalDown: string[];
 }): Promise<boolean> {
+  // A source marked critical is one Atlas cannot trade safely without: the
+  // price feed it values positions from, or the halt feed that stops it buying
+  // a suspended security. If one is down, entries stop — the dashboard says so,
+  // and this is what makes that claim true rather than decorative.
+  if (input.criticalDown.length > 0) {
+    await annotateCandidate(db, input.candidateRow.id, `Qualifies but not taken: ${input.criticalDown.join(", ")} unreachable — entries are blocked until critical feeds recover.`);
+    return false;
+  }
   if (!isWithinEntryWindow(input.clock)) {
     await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: outside the 10:00-3:45 ET entry window.");
     return false;

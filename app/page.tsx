@@ -559,12 +559,22 @@ function KnowledgeGraph({ nodes, edges }: { nodes: KGNode[]; edges: KGEdge[] }) 
     byType.set(n.type, group);
   }
   const typeOrder = Array.from(byType.keys()).sort();
-  const width = 640, height = 300;
+  // The viewBox ratio is matched exactly by the CSS box, so the graph fills its
+  // container edge to edge instead of being letterboxed inside it. Padding keeps
+  // the outer columns and the largest nodes clear of the frame.
+  const width = 1000, height = 340;
+  const padX = 90, padY = 34;
   const positions = new Map<string, { x: number; y: number }>();
   typeOrder.forEach((type, ti) => {
     const group = byType.get(type)!.sort((a, b) => (degree.get(b.key) ?? 0) - (degree.get(a.key) ?? 0));
-    const colX = ((ti + 0.5) / typeOrder.length) * width;
-    group.forEach((n, ni) => positions.set(n.key, { x: colX, y: ((ni + 0.5) / group.length) * height }));
+    const colX = typeOrder.length === 1
+      ? width / 2
+      : padX + (ti / (typeOrder.length - 1)) * (width - padX * 2);
+    // A single node in a column centres rather than pinning to the top.
+    group.forEach((n, ni) => positions.set(n.key, {
+      x: colX,
+      y: group.length === 1 ? height / 2 : padY + (ni / (group.length - 1)) * (height - padY * 2),
+    }));
   });
   const maxDegree = Math.max(1, ...Array.from(degree.values()));
   const selectedNode = selected ? nodes.find((n) => n.key === selected) : null;
@@ -576,7 +586,7 @@ function KnowledgeGraph({ nodes, edges }: { nodes: KGNode[]; edges: KGEdge[] }) 
 
   return (
     <div className="knowledge-graph">
-      <svg viewBox={`0 0 ${width} ${height}`} className="knowledge-graph-svg">
+      <svg viewBox={`0 0 ${width} ${height}`} className="knowledge-graph-svg" preserveAspectRatio="xMidYMid meet">
         <g className="knowledge-graph-edges">
           {edges.map((e) => {
             const a = positions.get(e.fromKey), b = positions.get(e.toKey);

@@ -60,8 +60,7 @@ export async function GET(request: Request) {
   // the last scan. A connection Atlas has never successfully reached reports
   // UNKNOWN rather than defaulting to LIVE.
   const ROLES: Record<string, string> = {
-    "Finnhub": "Primary quotes and company news",
-    "Yahoo Finance": "Index backup quotes + real session VWAP",
+    "Yahoo Finance": "Quotes, session VWAP, and company news",
     "Nasdaq Trading Halts": "Hard entry gate",
     "Federal Reserve": "Macro-event caution gate",
     "BLS": "Official macro verification",
@@ -93,7 +92,7 @@ export async function GET(request: Request) {
   return Response.json({
     threshold: 60,
     phase: "INFORMATION_COLLECTION",
-    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 10, providers: ["Finnhub", "Yahoo Finance", "SEC EDGAR", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Business Wire / PR Newswire", "Official issuer/agency releases"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news, SEC EDGAR, press-release wires, and official issuer/agency releases", quotes: "Finnhub with independent Yahoo Finance index and Coinbase crypto corroboration", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false, sourceRoles },
+    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 9, providers: ["Yahoo Finance", "SEC EDGAR", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Business Wire / PR Newswire", "Official issuer/agency releases"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Yahoo Finance company news, SEC EDGAR, press-release wires, and official issuer/agency releases", quotes: "Yahoo Finance real observed prices with independent Coinbase crypto corroboration", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false, sourceRoles },
     bands,
     nearMisses: candidateRows.filter((row) => row.nearMiss).slice(0, 50),
     confidenceTimeline: candidateRows.slice(0, 120).reverse().map((row) => ({ id: row.id, ticker: row.ticker, scanAt: row.scanAt, score: row.score, band: row.scoreBand, signals: JSON.parse(row.signalBreakdown || "[]") })),
