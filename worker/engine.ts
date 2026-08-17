@@ -32,7 +32,25 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     // from — while producing a red "SIT OUT" verdict that only reflects
     // whichever way the tape happened to close. Record an honest no-op instead.
     if (!isWithinCollectionWindow(clock)) {
-      await db.update(schema.scanRuns).set({ finishedAt: new Date().toISOString() }).where(eq(schema.scanRuns.id, scanRun.id));
+      // News collection pauses outside the window, but open positions must
+      // never be left unmanaged: stops and the force-close still have to be
+      // evaluated. Skipping this stranded five positions past the closing bell
+      // when the window ended before they were flattened.
+      const stranded = await db.select().from(schema.positions).where(eq(schema.positions.status, "OPEN"));
+      if (stranded.length > 0) {
+        const prices = await yahooQuotes(stranded.map((p) => (isCryptoTicker(p.ticker) ? `${p.ticker}-USD` : p.ticker)));
+        let account = await getOrCreateAccountState(db, clock.tradingDay);
+        for (const position of stranded) {
+          const snapshot = prices.get(isCryptoTicker(position.ticker) ? `${position.ticker}-USD` : position.ticker);
+          if (!snapshot) continue;
+          const closed = await manageOpenPosition(db, position, snapshot.price, now, clock);
+          if (closed) {
+            positionsClosed++;
+            if (!closed.shadow) account = await applyRealizedPnl(db, account, closed.realizedPnl);
+          }
+        }
+      }
+      await db.update(schema.scanRuns).set({ finishedAt: new Date().toISOString(), positionsClosed }).where(eq(schema.scanRuns.id, scanRun.id));
       return;
     }
 
@@ -300,10 +318,39 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     }
 
     const openPositions = await db.select().from(schema.positions).where(eq(schema.positions.status, "OPEN"));
+
+    // Every risk control — stop-loss, breakeven, trailing, and the 3:45
+    // force-close — depends on having a price for each open position. This
+    // previously fell back to Finnhub, which returns nothing from a Cloudflare
+    // Worker because Finnhub rate-limits the shared egress IPs. The result was
+    // `continue` on every position: stops never fired and positions were still
+    // open after the closing bell. Prices now come from the Yahoo map the rest
+    // of the scan already uses, with a direct Yahoo fetch for anything missing
+    // (crypto, or a ticker that has left the universe).
+    const positionQuotes = new Map<string, number>();
     for (const position of openPositions) {
-      const quote = quoteMap.get(position.ticker) ?? await getQuote(apiKey, quoteSymbolForTicker(position.ticker)).catch(() => null);
-      if (!quote) continue;
-      const closed = await manageOpenPosition(db, position, quote.c, now, clock);
+      const known = universeQuotes.get(position.ticker)?.c ?? quoteMap.get(position.ticker)?.c;
+      if (known != null) positionQuotes.set(position.ticker, known);
+    }
+    const unpriced = openPositions.map((p) => p.ticker).filter((ticker) => !positionQuotes.has(ticker));
+    if (unpriced.length > 0) {
+      for (const [ticker, snapshot] of await yahooQuotes(unpriced.map((t) => (isCryptoTicker(t) ? `${t}-USD` : t)))) {
+        positionQuotes.set(ticker.replace(/-USD$/, ""), snapshot.price);
+      }
+    }
+
+    for (const position of openPositions) {
+      const price = positionQuotes.get(position.ticker);
+      // An unpriceable open position is a risk-management failure, not a
+      // no-op: record it so it surfaces instead of failing silently.
+      if (price == null) {
+        await db.insert(schema.positionEvents).values({
+          positionId: position.id, at: now.toISOString(), type: "STOP_MOVED", price: position.stopPrice,
+          detail: "No live price available this scan — stop and force-close could not be evaluated.",
+        });
+        continue;
+      }
+      const closed = await manageOpenPosition(db, position, price, now, clock);
       if (closed) {
         positionsClosed++;
         // Shadow ("did not buy") positions test the sit-out hypothesis and must never
