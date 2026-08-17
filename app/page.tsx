@@ -235,7 +235,7 @@ export default function Home() {
 
       <section className="hero forward-hero">
         <div>
-          <p className="eyebrow">{weather?.classification.replace("_", " ") ?? "NO DATA YET"}</p>
+          <p className="eyebrow">{isMarketOpenNow(now) ? (weather?.classification.replace("_", " ") ?? "NO DATA YET") : "MARKET CLOSED"}</p>
           <h1><em className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</em></h1>
           <p className="lede">
             {account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)} realized` : "—"} · {openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions} open ·{" "}
