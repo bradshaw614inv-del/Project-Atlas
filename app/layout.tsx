@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Orbitron, Rajdhani } from "next/font/google";
 import "./globals.css";
 
@@ -7,10 +7,24 @@ const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"]
 const displayFont = Rajdhani({ variable: "--font-display", subsets: ["latin"], weight: ["500", "600", "700"] });
 const numeralFont = Orbitron({ variable: "--font-numeral", subsets: ["latin"], weight: ["600", "700", "800", "900"] });
 
+// Installable from a phone home screen so Atlas opens like an app instead of a
+// URL that has to be retyped. "standalone" display drops the browser chrome.
+export const viewport: Viewport = {
+  themeColor: "#14100c",
+  width: "device-width",
+  initialScale: 1,
+};
+
 export const metadata: Metadata = {
   title: "Project Atlas — Forward News Tracker",
   description: "Record real market-moving news and track what happens from today forward.",
-  icons: { icon: "/favicon.svg", shortcut: "/favicon.svg" },
+  manifest: "/manifest.json",
+  appleWebApp: { capable: true, title: "Atlas", statusBarStyle: "black-translucent" },
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }, { url: "/icon-192.png", sizes: "192x192", type: "image/png" }],
+    shortcut: "/icon.svg",
+    apple: "/apple-touch-icon.png",
+  },
   openGraph: {
     title: "Project Atlas — Replay the news. Measure the edge.",
     description: "Configure and replay more than 1,000 historical news-driven trades against a benchmark.",

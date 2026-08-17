@@ -1,0 +1,18 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="#14100c"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#c99858" stroke-width="9"/>
+  <g fill="#c99858">
+    <!-- beaded ring, echoing the live-score dial -->
+    <circle cx="256" cy="76" r="7"/><circle cx="318" cy="87" r="7"/><circle cx="372" cy="118" r="7"/>
+    <circle cx="412" cy="166" r="7"/><circle cx="431" cy="225" r="7"/><circle cx="431" cy="287" r="7"/>
+    <circle cx="412" cy="346" r="7"/><circle cx="372" cy="394" r="7"/><circle cx="318" cy="425" r="7"/>
+    <circle cx="256" cy="436" r="7"/><circle cx="194" cy="425" r="7"/><circle cx="140" cy="394" r="7"/>
+    <circle cx="100" cy="346" r="7"/><circle cx="81" cy="287" r="7"/><circle cx="81" cy="225" r="7"/>
+    <circle cx="100" cy="166" r="7"/><circle cx="140" cy="118" r="7"/><circle cx="194" cy="87" r="7"/>
+  </g>
+  <!-- Squared geometric A with a flat apex, matching the dashboard's numerals -->
+  <g fill="none" stroke="#f0e3d4" stroke-width="26" stroke-linejoin="miter" stroke-linecap="butt">
+    <path d="M204 344 L242 178 L270 178 L308 344"/>
+    <path d="M228 288 L284 288"/>
+  </g>
+</svg>

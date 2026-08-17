@@ -1,0 +1,16 @@
+{
+  "name": "Atlas — Automated News-Driven Simulator",
+  "short_name": "Atlas",
+  "description": "Paper-trading simulator driven by real market news and real observed quotes.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14100c",
+  "theme_color": "#14100c",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
