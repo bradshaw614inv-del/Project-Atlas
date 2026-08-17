@@ -256,7 +256,11 @@ export default function Home() {
     const live = livePrices[p.ticker];
     return sum + (live == null ? p.entryPrice * p.shares : live * p.shares);
   }, 0);
-  const investedPct = account && account.startingCapital > 0 ? (investedCost / account.startingCapital) * 100 : 0;
+  // Slots are sized from equity (contributed capital plus realized P&L), so the
+  // percentage has to divide by the same basis. Dividing by contributed capital
+  // alone reported a fully-invested account as 100.1%.
+  const equityBasis = account ? account.startingCapital + account.realizedPnl : 0;
+  const investedPct = equityBasis > 0 ? (investedCost / equityBasis) * 100 : 0;
   const unrealizedPct = investedCost > 0 ? (unrealizedPnl / investedCost) * 100 : 0;
   const quotedCount = openPositions.filter((p) => !p.shadow && livePrices[p.ticker] != null).length;
   const realOpenCount = openPositions.filter((p) => !p.shadow).length;
