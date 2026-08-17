@@ -2,7 +2,7 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub";
-import { getMarketClock, isForceCloseTime, isWithinEntryWindow, type MarketClock } from "./market-hours";
+import { getMarketClock, isForceCloseTime, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours";
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
@@ -25,6 +25,17 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
   try {
     const clock = getMarketClock(now);
+
+    // Outside the collection window every quote is frozen at the last close.
+    // Re-fetching and re-scoring them every five minutes burns free-tier quota,
+    // writes duplicate weather rows, and pollutes the history calibration reads
+    // from — while producing a red "SIT OUT" verdict that only reflects
+    // whichever way the tape happened to close. Record an honest no-op instead.
+    if (!isWithinCollectionWindow(clock)) {
+      await db.update(schema.scanRuns).set({ finishedAt: new Date().toISOString() }).where(eq(schema.scanRuns.id, scanRun.id));
+      return;
+    }
+
     const freeSources = await collectFreeSourceSnapshot(now);
 
     const account = await getOrCreateAccountState(db, clock.tradingDay);

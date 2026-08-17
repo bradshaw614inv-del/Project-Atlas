@@ -266,6 +266,9 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
 .weather-strip.eligible .weather-strip-class { color: var(--success); }
 .weather-strip.caution .weather-strip-class { color: var(--warning); }
 .weather-strip.sitout .weather-strip-class { color: var(--danger); }
+.weather-strip.closed .weather-strip-class { color: var(--subtle); }
+.weather-strip-stale { display: block; margin-top: 4px; font: 10px var(--font-geist-mono, monospace); color: var(--faint); }
+.weather-strip.closed .weather-strip-flags { opacity: .5; }
 .weather-strip-dial { display: flex; align-items: center; gap: 8px; font: 7px var(--font-geist-mono, monospace); color: var(--subtle); letter-spacing: .1em; }
 .weather-strip-dial b { font: 700 13px var(--font-numeral, var(--font-geist-mono), monospace); color: var(--accent-text); }
 .weather-strip-flags { display: flex; gap: 8px; flex-wrap: wrap; }

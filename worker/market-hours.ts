@@ -31,12 +31,25 @@ const MARKET_CLOSE = 16 * 60;
 const ENTRY_WINDOW_START = 10 * 60; // skip the first 30 minutes — most volatile, least reliable
 const ENTRY_WINDOW_END = 15 * 60 + 45; // stop opening new positions 15 minutes before the close
 
+// Wider than regular hours on purpose: real catalysts land premarket (earnings
+// before the bell) and after the close, and Atlas should collect that news when
+// it appears. Outside this window quotes are frozen, so re-reading them every
+// five minutes only burns free-tier quota and writes duplicate history.
+const COLLECTION_WINDOW_START = 8 * 60;
+const COLLECTION_WINDOW_END = 17 * 60;
+
 export function isWeekday(clock: MarketClock) {
   return WEEKDAYS.has(clock.weekday);
 }
 
-export function isWithinScanWindow(clock: MarketClock) {
+export function isMarketOpen(clock: MarketClock) {
   return isWeekday(clock) && clock.minutesSinceMidnight >= MARKET_OPEN && clock.minutesSinceMidnight < MARKET_CLOSE;
+}
+
+export function isWithinCollectionWindow(clock: MarketClock) {
+  return isWeekday(clock)
+    && clock.minutesSinceMidnight >= COLLECTION_WINDOW_START
+    && clock.minutesSinceMidnight < COLLECTION_WINDOW_END;
 }
 
 export function isWithinEntryWindow(clock: MarketClock) {

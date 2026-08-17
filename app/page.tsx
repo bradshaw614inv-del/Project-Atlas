@@ -55,6 +55,19 @@ function timeAgo(value: string) {
   return `${Math.floor(seconds / 3600)}h ago`;
 }
 
+// Regular US session in Eastern time, evaluated from the viewer's clock so the
+// dashboard can label a stored verdict as stale the moment the bell rings.
+// Holidays aren't in any free feed Atlas trusts, so they aren't inferred here.
+function isMarketOpenNow(timestamp: number) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date(timestamp));
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
+  if (!["Mon", "Tue", "Wed", "Thu", "Fri"].includes(get("weekday"))) return false;
+  const minutes = Number(get("hour")) * 60 + Number(get("minute"));
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   return res.json() as Promise<T>;
@@ -251,7 +264,7 @@ export default function Home() {
         <button className="secondary" onClick={runScanNow} disabled={scanning}>{scanning ? "SCANNING…" : "INITIATE SCAN"}</button>
       </section>
 
-      <WeatherStrip weather={weather} weatherClass={weatherClass} lastScan={lastScan} />
+      <WeatherStrip weather={weather} weatherClass={weatherClass} lastScan={lastScan} marketOpen={isMarketOpenNow(now)} />
 
       <section className="account-strip settings-strip">
         <form className="capital-control" onSubmit={addFunds}>
@@ -567,19 +580,23 @@ function flagTone(flag: string): "positive" | "negative" | "neutral" {
 // Market weather as a live instrument: the dial needle tracks real weather
 // data completeness, the classification reads in its true severity color,
 // and every flag pill carries a dot colored by its own measured direction.
-function WeatherStrip({ weather, weatherClass, lastScan }: { weather: Weather | null; weatherClass: string; lastScan: ScanRun | null }) {
+function WeatherStrip({ weather, weatherClass, lastScan, marketOpen }: { weather: Weather | null; weatherClass: string; lastScan: ScanRun | null; marketOpen: boolean }) {
   const flags = weather?.flags ?? [];
   let completeness: number | null = null;
   for (const flag of flags) {
     const match = flag.match(/completeness (\d+)%/i);
     if (match) completeness = Number(match[1]);
   }
+  // While the market is shut every quote is frozen at the last close, so the
+  // stored verdict describes that final tick, not conditions now. Say so
+  // plainly rather than showing a stale red SIT OUT as if it were live.
   return (
-    <section className={`weather-strip ${weatherClass}`}>
+    <section className={`weather-strip ${marketOpen ? weatherClass : "closed"}`}>
       <div className="weather-strip-main">
         <div>
           <span className="hud-strip-eyebrow">MARKET WEATHER</span>
-          <b className="weather-strip-class">{weather?.classification.replace("_", " ") ?? "NO DATA YET"}</b>
+          <b className="weather-strip-class">{marketOpen ? (weather?.classification.replace("_", " ") ?? "NO DATA YET") : "MARKET CLOSED"}</b>
+          {!marketOpen && weather && <small className="weather-strip-stale">Last reading at the close: {weather.classification.replace("_", " ")}</small>}
         </div>
         <span className="weather-strip-dial">
           <MiniDial fraction={(completeness ?? 0) / 100} />
