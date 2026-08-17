@@ -6,7 +6,7 @@ import { getMarketClock, isForceCloseTime, isWithinCollectionWindow, isWithinEnt
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
-import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooBackupQuotes } from "./free-sources";
+import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
@@ -40,9 +40,16 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
     const account = await getOrCreateAccountState(db, clock.tradingDay);
 
-    // One throttled pass covers the index trio and the whole universe; the same
-    // map is reused for candidate scoring below so nothing is fetched twice.
-    const finnhubQuotes = await getQuotesThrottled(apiKey, ["SPY", "QQQ", "VIXY", ...TICKER_UNIVERSE]);
+    // A Cloudflare Worker invocation is capped at 50 subrequests. Fetching both
+    // Finnhub and Yahoo quotes for 23 symbols, plus 20 company-news calls, put a
+    // scan around 81 — so everything past the cap failed silently, and company
+    // news (last in the sequence) never ran at all. That is why breadth read
+    // 3/20 and no candidates were scored during live market hours.
+    //
+    // Quotes now come from Yahoo alone: it returned 20/20 in testing where
+    // Finnhub returned 4, because Finnhub rate-limits the shared Cloudflare
+    // egress IPs. Finnhub's remaining job is news, which Yahoo does not provide.
+    const finnhubQuotes = new Map<string, FinnhubQuote | null>();
 
     // Whatever the primary feed still dropped, ask Yahoo for — a second
     // independent source of real observed prices, never an estimate. This is
@@ -53,17 +60,32 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         ? null
         : { c: snapshot.price, d: snapshot.prevClose === null ? null : snapshot.price - snapshot.prevClose, dp: snapshot.changePct, h: snapshot.price, o: snapshot.price, l: snapshot.price, pc: snapshot.prevClose ?? snapshot.price, t: Math.floor(now.getTime() / 1000) };
 
+    // Yahoo covers the whole universe every scan rather than only patching the
+    // gaps Finnhub leaves — gap-filling still produced a starved breadth sample
+    // (4 of 20 during live market hours) because Finnhub drops most of the
+    // burst. Finnhub still wins where it did respond; Yahoo fills everything else.
     const universeQuotes = new Map(finnhubQuotes);
-    for (const [symbol, snapshot] of freeSources.indexes) {
-      if (universeQuotes.get(symbol)?.dp == null) universeQuotes.set(symbol, asQuote(snapshot) ?? universeQuotes.get(symbol) ?? null);
-    }
-    const gapSymbols = TICKER_UNIVERSE.filter((ticker) => universeQuotes.get(ticker)?.dp == null);
-    if (gapSymbols.length > 0) {
-      for (const [symbol, snapshot] of await yahooBackupQuotes(gapSymbols)) {
+    const yahooAll = await yahooQuotes(["SPY", "QQQ", "VIXY", ...TICKER_UNIVERSE]);
+    for (const [symbol, snapshot] of yahooAll) {
+      if (universeQuotes.get(symbol)?.dp == null) {
         const quote = asQuote(snapshot);
         if (quote) universeQuotes.set(symbol, quote);
       }
     }
+
+    // Finnhub's health is judged by whether it actually returned quotes this
+    // scan, not by a separate ping — a key that returns 200 on an unrelated
+    // endpoint while rate-limiting every quote is not a working connection.
+    const finnhubLive = Array.from(finnhubQuotes.values()).filter((quote) => quote?.dp != null).length;
+    const probes = new Map<string, { ok: boolean; detail: string }>([
+      ["Finnhub", { ok: finnhubLive > 0, detail: finnhubLive > 0 ? `${finnhubLive} quotes returned` : "no usable quotes returned this scan" }],
+      ...(["Yahoo Finance", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Press-release wires"] as const)
+        .map((name) => [name, {
+          ok: freeSources.health[name] === "LIVE",
+          detail: freeSources.health[name] === "LIVE" ? "responding" : "no response",
+        }] as [string, { ok: boolean; detail: string }]),
+    ]);
+    await recordConnectionHealth(db, probes, now);
 
     const spy = universeQuotes.get("SPY") ?? null;
     const qqq = universeQuotes.get("QQQ") ?? null;
@@ -94,26 +116,33 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     const collectionStart = new Date(now);
     collectionStart.setUTCDate(collectionStart.getUTCDate() - COLLECTION_LOOKBACK_DAYS);
     const collectionStartIso = collectionStart.toISOString().slice(0, 10);
+    // News is rotated in halves across consecutive scans to stay inside the
+    // subrequest budget. Every ticker is still checked every 10 minutes, which
+    // is well inside the 6-hour freshness window the scorer allows.
+    const half = Math.ceil(TICKER_UNIVERSE.length / 2);
+    const rotation = Math.floor(now.getTime() / (5 * 60 * 1000)) % 2;
+    const newsTickers = TICKER_UNIVERSE.slice(rotation * half, rotation * half + half);
+
     const pairs: { ticker: string; story: typeof schema.newsStories.$inferSelect }[] = [];
-    for (const ticker of TICKER_UNIVERSE) {
-      const items = await getCompanyNews(apiKey, ticker, collectionStartIso, todayIso).catch(() => []);
-      const newestItems = [...items].sort((a, b) => b.datetime - a.datetime).slice(0, 10);
+    for (const ticker of newsTickers) {
+      const items = await yahooNews(ticker).catch(() => []);
+      const newestItems = [...items].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt)).slice(0, 10);
       for (const item of newestItems) {
-        const publishedAt = new Date(item.datetime * 1000);
+        const publishedAt = new Date(item.publishedAt);
         const ageMinutes = (now.getTime() - publishedAt.getTime()) / 60000;
 
-        const existing = await db.select().from(schema.newsStories).where(eq(schema.newsStories.finnhubId, String(item.id))).limit(1);
+        const existing = await db.select().from(schema.newsStories).where(eq(schema.newsStories.finnhubId, item.id)).limit(1);
         let story = existing[0];
         if (!story) {
           const [inserted] = await db.insert(schema.newsStories).values({
-            finnhubId: String(item.id),
+            finnhubId: item.id,
             headline: item.headline,
-            summary: item.summary || "",
-            source: item.source || "",
-            url: item.url || "",
+            summary: item.summary,
+            source: item.source,
+            url: item.url,
             publishedAt: publishedAt.toISOString(),
             relatedTickers: ticker,
-            finnhubCategory: item.category || "",
+            finnhubCategory: "yahoo-news",
             firstSeenAt: startedAt,
           }).returning();
           story = inserted;
@@ -420,6 +449,61 @@ async function calibrateFromHistory(db: Db, now: Date) {
     detail: findings.join(" · "),
     evidence: JSON.stringify({ windowDays: 7, storiesMeasured: stories.size, catalystsWithSample: findings.length }),
   });
+}
+
+// Connections Atlas depends on. `critical` marks the ones whose loss should
+// stop trading rather than merely be noted. Robinhood is intentionally absent:
+// no broker is connected yet, and listing one that doesn't exist would be a
+// fabricated status. Adding it later means adding a probe here, nothing more.
+const CONNECTION_REGISTRY: { name: string; kind: string; critical: boolean }[] = [
+  { name: "Finnhub", kind: "DATA", critical: true },
+  { name: "Yahoo Finance", kind: "DATA", critical: false },
+  { name: "Nasdaq Trading Halts", kind: "DATA", critical: true },
+  { name: "Federal Reserve", kind: "DATA", critical: false },
+  { name: "BLS", kind: "DATA", critical: false },
+  { name: "openFDA", kind: "DATA", critical: false },
+  { name: "Coinbase", kind: "DATA", critical: false },
+  { name: "Press-release wires", kind: "DATA", critical: false },
+];
+
+// A connection has to fail twice in a row before it is called DOWN. A single
+// timeout on a free endpoint is normal noise; alerting on it would train the
+// user to ignore alerts.
+const FAILURES_BEFORE_DOWN = 2;
+
+async function recordConnectionHealth(db: Db, observed: Map<string, { ok: boolean; detail: string }>, now: Date) {
+  const nowIso = now.toISOString();
+  for (const connection of CONNECTION_REGISTRY) {
+    const probe = observed.get(connection.name);
+    if (!probe) continue;
+
+    const [existing] = await db.select().from(schema.connectionStatus).where(eq(schema.connectionStatus.name, connection.name)).limit(1);
+    const previousStatus = existing?.status ?? "LIVE";
+    const consecutiveFailures = probe.ok ? 0 : (existing?.consecutiveFailures ?? 0) + 1;
+    const status = probe.ok ? "LIVE" : consecutiveFailures >= FAILURES_BEFORE_DOWN ? "DOWN" : "DEGRADED";
+
+    const row = {
+      name: connection.name, kind: connection.kind, status,
+      critical: connection.critical ? 1 : 0,
+      detail: probe.detail, consecutiveFailures,
+      lastOkAt: probe.ok ? nowIso : existing?.lastOkAt ?? null,
+      lastCheckedAt: nowIso,
+    };
+    if (existing) await db.update(schema.connectionStatus).set(row).where(eq(schema.connectionStatus.name, connection.name));
+    else await db.insert(schema.connectionStatus).values(row);
+
+    // Only a real transition is an event. Steady state writes nothing.
+    if (existing && previousStatus !== status) {
+      const recovered = status === "LIVE";
+      await db.insert(schema.connectionEvents).values({
+        at: nowIso, name: connection.name, fromStatus: previousStatus, toStatus: status,
+        severity: recovered ? "INFO" : status === "DOWN" && connection.critical ? "CRITICAL" : "WARNING",
+        detail: recovered
+          ? `${connection.name} is responding again.`
+          : `${connection.name} ${status === "DOWN" ? "is not responding" : "failed a check"}: ${probe.detail}`,
+      });
+    }
+  }
 }
 
 async function getOrCreateAccountState(db: Db, tradingDay: string) {

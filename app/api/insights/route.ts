@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
-import { candidates, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns } from "../../../db/schema";
+import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns } from "../../../db/schema";
 
 const PAPER_TRADE_TARGET = 100;
 const HOLDOUT_TRADE_TARGET = 30;
@@ -21,6 +21,10 @@ export async function GET(request: Request) {
   const pnl = realClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const shadowPnl = shadowClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const atlasEdge = realClosed.length >= 30 ? realClosed.reduce((sum, row) => sum + (row.atlasEdge ?? 0), 0) / realClosed.length : null;
+  const [connections, alerts] = await Promise.all([
+    db.select().from(connectionStatus),
+    db.select().from(connectionEvents).orderBy(desc(connectionEvents.id)).limit(25),
+  ]);
   const [journal, experimentRows, nodes, edges, scans, weatherRows, stories] = await Promise.all([
     db.select().from(learningJournal).orderBy(desc(learningJournal.id)).limit(30),
     db.select().from(experiments).orderBy(desc(experiments.id)).limit(30),
@@ -52,6 +56,36 @@ export async function GET(request: Request) {
       { label: "Frozen-rule holdout", passed: false, value: `0/${HOLDOUT_TRADE_TARGET}` },
     ],
   };
+  // Roles are static descriptions; status comes from the real probe recorded on
+  // the last scan. A connection Atlas has never successfully reached reports
+  // UNKNOWN rather than defaulting to LIVE.
+  const ROLES: Record<string, string> = {
+    "Finnhub": "Primary quotes and company news",
+    "Yahoo Finance": "Index backup quotes + real session VWAP",
+    "Nasdaq Trading Halts": "Hard entry gate",
+    "Federal Reserve": "Macro-event caution gate",
+    "BLS": "Official macro verification",
+    "openFDA": "Regulatory corroboration",
+    "Coinbase": "Independent crypto quote check",
+    "Press-release wires": "Issuer press-release corroboration",
+  };
+  const byName = new Map(connections.map((row) => [row.name, row]));
+  const sourceRoles = Object.entries(ROLES).map(([name, role]) => {
+    const row = byName.get(name);
+    return {
+      name, role,
+      status: row?.status ?? "UNKNOWN",
+      critical: row?.critical === 1,
+      detail: row?.detail ?? "never probed",
+      lastOkAt: row?.lastOkAt ?? null,
+      lastCheckedAt: row?.lastCheckedAt ?? null,
+    };
+  }).concat([
+    { name: "Robinhood", role: "Broker execution — not connected; Atlas is paper-only", status: "NOT_CONNECTED", critical: false, detail: "No brokerage is connected. Atlas never places real orders.", lastOkAt: null, lastCheckedAt: null },
+    { name: "X", role: "Discovery only; never scoring", status: "DISABLED", critical: false, detail: "Read API is paid.", lastOkAt: null, lastCheckedAt: null },
+  ]);
+  const downConnections = sourceRoles.filter((source) => source.status === "DOWN" || source.status === "DEGRADED");
+
   const positionId = Number(new URL(request.url).searchParams.get("positionId"));
   const replay = Number.isInteger(positionId) && positionId > 0
     ? await db.select().from(positionEvents).where(eq(positionEvents.positionId, positionId)).orderBy(positionEvents.id)
@@ -59,17 +93,7 @@ export async function GET(request: Request) {
   return Response.json({
     threshold: 60,
     phase: "INFORMATION_COLLECTION",
-    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 10, providers: ["Finnhub", "Yahoo Finance", "SEC EDGAR", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Business Wire / PR Newswire", "Official issuer/agency releases"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news, SEC EDGAR, press-release wires, and official issuer/agency releases", quotes: "Finnhub with independent Yahoo Finance index and Coinbase crypto corroboration", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false, sourceRoles: [
-      { name: "Yahoo Finance", role: "Index backup quotes + real session VWAP", status: "LIVE" },
-      { name: "Nasdaq Trading Halts", role: "Hard entry gate", status: "LIVE" },
-      { name: "Federal Reserve", role: "Macro-event caution gate", status: "LIVE" },
-      { name: "BLS", role: "Official macro verification", status: "LIVE" },
-      { name: "openFDA", role: "Regulatory corroboration", status: "LIVE" },
-      { name: "Coinbase", role: "Independent crypto quote check", status: "LIVE" },
-      { name: "Business Wire / PR Newswire", role: "Issuer press-release corroboration", status: "LIVE" },
-      { name: "Company IR / agencies", role: "Primary-source corroboration", status: "LIVE" },
-      { name: "X", role: "Discovery only; never scoring", status: "DISABLED — PAID" },
-    ] },
+    provenance: { policy: "REAL_INPUTS_PAPER_OUTCOMES", providerCount: 10, providers: ["Finnhub", "Yahoo Finance", "SEC EDGAR", "Nasdaq Trading Halts", "Federal Reserve", "BLS", "openFDA", "Coinbase", "Business Wire / PR Newswire", "Official issuer/agency releases"], outletCount: outlets.length, outlets, traceableStories: traceableStories.length, storiesChecked: stories.length, news: "Finnhub news, SEC EDGAR, press-release wires, and official issuer/agency releases", quotes: "Finnhub with independent Yahoo Finance index and Coinbase crypto corroboration", securities: "Real listed ticker universe", fills: "Paper calculations from observed scan quotes", simulatedFields: ["paper entry", "paper exit", "paper return", "paper loss", "paper portfolio value"], unavailableInputsAreSynthetic: false, sourceRoles },
     bands,
     nearMisses: candidateRows.filter((row) => row.nearMiss).slice(0, 50),
     confidenceTimeline: candidateRows.slice(0, 120).reverse().map((row) => ({ id: row.id, ticker: row.ticker, scanAt: row.scanAt, score: row.score, band: row.scoreBand, signals: JSON.parse(row.signalBreakdown || "[]") })),
@@ -78,5 +102,11 @@ export async function GET(request: Request) {
     validationPolicy: { minSampleSize: PAPER_TRADE_TARGET, holdoutSampleSize: HOLDOUT_TRADE_TARGET, requiresBacktest: true, liveConfigMutationAllowed: false },
     readiness,
     journal, experiments: experimentRows, knowledgeGraph: { nodes, edges }, replay,
+    connectionHealth: {
+      connections: sourceRoles,
+      down: downConnections,
+      criticalDown: downConnections.some((source) => source.critical && source.status === "DOWN"),
+      alerts,
+    },
   });
 }

@@ -41,7 +41,7 @@ type Candidate = {
 };
 type KGNode = { id: number; key: string; type: string; label: string; metadata: string };
 type KGEdge = { id: number; fromKey: string; toKey: string; relation: string; weight: number; evidenceCount: number };
-type Insights = { threshold: number; provenance: { providerCount: number; providers: string[]; outletCount: number; outlets: string[]; traceableStories: number; storiesChecked: number; sourceRoles?: { name: string; role: string; status: string }[] }; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: KGNode[]; edges: KGEdge[] } };
+type Insights = { threshold: number; provenance: { providerCount: number; providers: string[]; outletCount: number; outlets: string[]; traceableStories: number; storiesChecked: number; sourceRoles?: { name: string; role: string; status: string; critical?: boolean; detail?: string }[] }; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: KGNode[]; edges: KGEdge[] }; connectionHealth?: { connections: { name: string; role: string; status: string; critical: boolean; detail: string }[]; down: { name: string; status: string; critical: boolean; detail: string }[]; criticalDown: boolean; alerts: { id: number; at: string; name: string; fromStatus: string; toStatus: string; severity: string; detail: string }[] } };
 
 function money(n: number, digits = 2) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
@@ -93,6 +93,9 @@ export default function Home() {
   const [insights, setInsights] = useState<Insights | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const prevScoreRef = useRef<number | null>(null);
+  const [closedCollapsed, setClosedCollapsed] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [pullDistance, setPullDistance] = useState(0);
 
   async function refreshState() {
     const data = await getJson<{ account: Account | null; weather: Weather | null; lastScan: ScanRun | null; collectionHealth: CollectionHealth; recentTransactions: AccountTransaction[] }>("/api/state");
@@ -118,6 +121,48 @@ export default function Home() {
     setCandidates(data.candidates);
   }
   async function refreshInsights() { setInsights(await getJson<Insights>("/api/insights")); }
+
+  async function refreshAll() {
+    setRefreshing(true);
+    try {
+      await Promise.all([refreshState(), refreshPositions(), refreshCandidates(), refreshInsights()]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  // Pull-to-refresh. Only arms when the page is already scrolled to the very
+  // top, so it never hijacks an ordinary upward scroll mid-page.
+  useEffect(() => {
+    let startY = 0;
+    let pulling = false;
+    const THRESHOLD = 70;
+    const onStart = (event: TouchEvent) => {
+      if (window.scrollY > 0) return;
+      startY = event.touches[0].clientY;
+      pulling = true;
+    };
+    const onMove = (event: TouchEvent) => {
+      if (!pulling) return;
+      const distance = event.touches[0].clientY - startY;
+      if (distance <= 0) { pulling = false; setPullDistance(0); return; }
+      setPullDistance(Math.min(distance * 0.5, 90));
+    };
+    const onEnd = () => {
+      if (!pulling) return;
+      pulling = false;
+      setPullDistance((current) => { if (current >= THRESHOLD * 0.5) void refreshAll(); return 0; });
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchmove", onMove, { passive: true });
+    window.addEventListener("touchend", onEnd);
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = "obsidian";
@@ -227,8 +272,33 @@ export default function Home() {
     ? collectionHealth.recentScans.filter((s) => s.finishedAt && !s.error).length / collectionHealth.recentScans.length
     : 0;
 
+  const alerts = insights?.connectionHealth;
+  const downList = alerts?.down ?? [];
+
   return (
     <main>
+      <div className="pull-refresh" style={{ height: refreshing ? 52 : pullDistance }} aria-hidden={!refreshing && pullDistance === 0}>
+        <span className={`pull-spinner ${refreshing ? "spinning" : ""}`} style={{ opacity: refreshing ? 1 : Math.min(1, pullDistance / 45) }} />
+        <small>{refreshing ? "REFRESHING" : pullDistance >= 35 ? "RELEASE TO REFRESH" : "PULL TO REFRESH"}</small>
+      </div>
+
+      {downList.length > 0 && (
+        <section className={`alert-banner ${alerts?.criticalDown ? "critical" : "warning"}`} role="status">
+          <b>{alerts?.criticalDown ? "CONNECTION LOST" : "CONNECTION DEGRADED"}</b>
+          <div className="alert-banner-list">
+            {downList.map((connection) => (
+              <span key={connection.name}>
+                <i />{connection.name} — {connection.status === "DOWN" ? "not responding" : "failing checks"}
+                {connection.critical && <em>trading gate</em>}
+              </span>
+            ))}
+          </div>
+          <small>{alerts?.criticalDown
+            ? "A feed Atlas depends on to trade safely is unreachable. Entries stay blocked until it returns."
+            : "Atlas is still running on its remaining sources. This is a warning, not a halt."}</small>
+        </section>
+      )}
+
       <header className="topbar">
         <div className="brand"><span className="brandmark">A</span><div><strong>ATLAS</strong><small>AUTOMATED NEWS-DRIVEN SIMULATOR</small></div></div>
         <div className="mode"><span className="pulse" /> INFORMATION COLLECTION PHASE</div>
@@ -321,8 +391,25 @@ export default function Home() {
       </section>
 
       <section className="tracker">
-        <div className="tracker-head"><div><span>TRADE HISTORY</span><h2>Closed positions</h2><p>Every closed trade, win or loss — nothing is hidden or removed.</p></div></div>
-        {closedPositions.length === 0 ? <div className="empty"><p>No closed trades yet.</p></div> : <div className="event-grid">{closedPositions.map((p) => (
+        <div className="tracker-head">
+          <div><span>TRADE HISTORY</span><h2>Closed positions</h2><p>Every closed trade, win or loss — nothing is hidden or removed.</p></div>
+          {closedPositions.length > 0 && (
+            <button type="button" className="collapse-toggle" aria-expanded={!closedCollapsed} onClick={() => setClosedCollapsed((v) => !v)}>
+              <i className={closedCollapsed ? "" : "open"} />
+              {closedCollapsed ? `SHOW ${closedPositions.length}` : "HIDE"}
+            </button>
+          )}
+        </div>
+        {closedPositions.length === 0 ? <div className="empty"><p>No closed trades yet.</p></div> : closedCollapsed ? (
+          <button type="button" className="closed-summary" onClick={() => setClosedCollapsed(false)}>
+            {closedPositions.slice(0, 8).map((p) => (
+              <span key={p.id} className={(p.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>
+                {p.ticker} {p.returnPct !== null ? `${p.returnPct >= 0 ? "+" : ""}${p.returnPct.toFixed(2)}%` : "—"}
+              </span>
+            ))}
+            {closedPositions.length > 8 && <span className="more">+{closedPositions.length - 8} more</span>}
+          </button>
+        ) : <div className="event-grid">{closedPositions.map((p) => (
           <article className="event-card" key={p.id}>
             <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? `CRYPTO · ${p.shadow ? "SHADOW" : p.exitReason}` : p.shadow ? "SHADOW" : p.exitReason}</span><strong>{p.ticker}</strong></div><time>{p.exitAt ? displayDate(p.exitAt) : ""}</time></div>
             <h3>{p.headline || "—"}</h3>

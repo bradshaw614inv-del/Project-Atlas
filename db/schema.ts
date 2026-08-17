@@ -152,6 +152,34 @@ export const knowledgeNodes = sqliteTable("knowledge_nodes", {
   metadata: text("metadata").notNull().default("{}"),
 });
 
+// Current state of every upstream Atlas depends on. Rows are created the first
+// time a connection is probed, so adding a future connection (a broker, say)
+// needs no migration — only a probe that reports its status.
+export const connectionStatus = sqliteTable("connection_status", {
+  name: text("name").primaryKey(),
+  kind: text("kind").notNull().default("DATA"), // DATA | BROKER
+  status: text("status").notNull(), // LIVE | DEGRADED | DOWN | DISABLED
+  critical: integer("critical").notNull().default(0), // 1 = losing it should block trading
+  detail: text("detail").notNull().default(""),
+  consecutiveFailures: integer("consecutive_failures").notNull().default(0),
+  lastOkAt: text("last_ok_at"),
+  lastCheckedAt: text("last_checked_at").notNull(),
+});
+
+// Append-only transition log — the notification feed. One row per real status
+// change, never one per scan, so a feed that is down for an hour produces a
+// single alert rather than twelve.
+export const connectionEvents = sqliteTable("connection_events", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  at: text("at").notNull(),
+  name: text("name").notNull(),
+  fromStatus: text("from_status").notNull(),
+  toStatus: text("to_status").notNull(),
+  severity: text("severity").notNull(), // INFO | WARNING | CRITICAL
+  detail: text("detail").notNull().default(""),
+  acknowledgedAt: text("acknowledged_at"),
+});
+
 export const knowledgeEdges = sqliteTable("knowledge_edges", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   fromKey: text("from_key").notNull(),

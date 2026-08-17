@@ -90,11 +90,58 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
   };
 }
 
-async function yahooIndexes() {
-  const indexes = new Map<string, IndexSnapshot>();
-  for (const symbol of ["SPY", "QQQ", "VIXY"]) {
-    try { indexes.set(symbol, await yahooIndexSnapshot(symbol)); } catch { /* stays absent — never estimated */ }
+// Finnhub rate-limits by origin IP, and Cloudflare Workers share egress IPs
+// across many customers — so the worker reliably gets only a handful of the ~23
+// quotes it asks for even though the same key returns all of them from a normal
+// machine. Yahoo has no such limit here, so it carries the whole universe and
+// Finnhub becomes the supplement rather than the other way round.
+export async function yahooQuotes(symbols: string[]) {
+  const snapshots = new Map<string, IndexSnapshot>();
+  const chunkSize = 5;
+  for (let i = 0; i < symbols.length; i += chunkSize) {
+    const results = await Promise.allSettled(symbols.slice(i, i + chunkSize).map(async (symbol) =>
+      [symbol, await yahooIndexSnapshot(symbol)] as const));
+    for (const result of results) {
+      if (result.status === "fulfilled") snapshots.set(result.value[0], result.value[1]);
+    }
+    if (i + chunkSize < symbols.length) await new Promise((resolve) => setTimeout(resolve, 120));
   }
+  return snapshots;
+}
+
+export type WireStory = { id: string; headline: string; summary: string; source: string; url: string; publishedAt: string };
+
+// Yahoo's search endpoint returns real, dated, attributed articles per ticker.
+// It exists because Finnhub's free company-news is effectively empty (one AAPL
+// story in two days, already 5 hours old) while Yahoo returns ten items all
+// under six hours. Freshness is worth 20 of the 100 scoring points and decays
+// over exactly that window, so the difference is the gap between a catalyst
+// that can qualify and one that has already aged out before Atlas sees it.
+export async function yahooNews(ticker: string): Promise<WireStory[]> {
+  const data = await json<{ news?: { uuid?: string; title?: string; link?: string; publisher?: string; providerPublishTime?: number }[] }>(
+    `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ticker)}&newsCount=10&quotesCount=0`,
+    { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } },
+  );
+  const stories: WireStory[] = [];
+  for (const item of data.news ?? []) {
+    const publishedSeconds = Number(item.providerPublishTime);
+    // Every field must be real and traceable; anything missing an id, title,
+    // link or timestamp is dropped rather than backfilled with a guess.
+    if (!item.uuid || !item.title || !item.link || !Number.isFinite(publishedSeconds)) continue;
+    stories.push({
+      id: `yahoo:${item.uuid}`,
+      headline: item.title,
+      summary: "",
+      source: item.publisher?.trim() || "Yahoo Finance",
+      url: item.link,
+      publishedAt: new Date(publishedSeconds * 1000).toISOString(),
+    });
+  }
+  return stories;
+}
+
+async function yahooIndexes() {
+  const indexes = await yahooQuotes(["SPY", "QQQ", "VIXY"]);
   if (indexes.size === 0) throw new Error("yahoo: all index snapshots failed");
   return indexes;
 }
