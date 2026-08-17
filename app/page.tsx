@@ -29,6 +29,7 @@ type Position = {
   id: number; ticker: string; status: "OPEN" | "CLOSED"; shadow: number; entryPrice: number; entryAt: string;
   shares: number; stopPrice: number; highWaterMark: number; trailingActivated: number;
   exitPrice: number | null; exitAt: string | null; exitReason: string | null; realizedPnl: number | null;
+  returnPct: number | null;
   headline: string | null; sourceUrl: string | null;
 };
 type Candidate = {
@@ -328,7 +329,11 @@ export default function Home() {
             <div className="event-numbers">
               <div><span>ENTRY → EXIT</span><b>{money(p.entryPrice)} → {p.exitPrice ? money(p.exitPrice) : "—"}</b></div>
               <div><span>SHARES</span><b>{p.shares.toFixed(2)}</b></div>
-              <div><span>REALIZED</span><b className={(p.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{p.realizedPnl !== null ? `${p.realizedPnl >= 0 ? "+" : ""}${money(p.realizedPnl)}` : "—"}</b></div>
+              <div>
+                <span>REALIZED</span>
+                <b className={(p.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{p.realizedPnl !== null ? `${p.realizedPnl >= 0 ? "+" : ""}${money(p.realizedPnl)}` : "—"}</b>
+                <em className={`return-pct ${(p.returnPct ?? 0) >= 0 ? "positive" : "negative"}`}>{p.returnPct !== null ? `${p.returnPct >= 0 ? "+" : ""}${p.returnPct.toFixed(2)}%` : "—"}</em>
+              </div>
             </div>
           </article>
         ))}</div>}

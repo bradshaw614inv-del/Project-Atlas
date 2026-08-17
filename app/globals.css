@@ -356,6 +356,10 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
 .event-numbers > div:last-child { border: 0; }
 .event-numbers span { color: var(--faint); font: 7px var(--font-geist-mono, monospace); letter-spacing: .1em; }
 .event-numbers b { font: 12px var(--font-geist-mono, monospace); }
+.event-numbers > div { align-content: start; gap: 4px; }
+.return-pct { font: 700 15px var(--font-numeral, var(--font-geist-mono), monospace); font-style: normal; letter-spacing: .01em; }
+.return-pct.positive { color: var(--success); }
+.return-pct.negative { color: var(--danger); }
 .event-actions { display: grid; grid-template-columns: 1fr auto auto; align-items: end; gap: 9px; margin-top: 15px; }
 .event-actions label, .modal label { display: grid; gap: 6px; }
 .event-actions label span, .modal label span { color: var(--subtle); font-size: 10px; }
