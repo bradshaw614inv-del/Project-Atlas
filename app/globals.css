@@ -235,7 +235,7 @@ main p, main small, main label, .lede, .tracker-head p, .watchlist-head p, .safe
 .tick-rule { max-width: 1500px; margin: auto; height: 8px; border-bottom: 1px solid var(--accent-soft); background: repeating-linear-gradient(90deg, var(--accent-soft) 0 1px, transparent 1px 24px); background-repeat: repeat-x; background-size: 100% 8px; opacity: .65; }
 
 
-.account-strip { max-width: 1500px; margin: auto; display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; padding: 1px; background: var(--accent-soft); border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, var(--card)); }
+.account-strip { max-width: 1500px; margin: auto; display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; padding: 1px; background: var(--accent-soft); border-bottom: 1px solid color-mix(in srgb, var(--accent) 14%, var(--card)); }
 .account-strip > div, .account-strip > form { padding: 22px 26px; display: grid; gap: 7px; background: linear-gradient(145deg, color-mix(in srgb, var(--surface-2) 92%, transparent), color-mix(in srgb, var(--card) 96%, transparent)); }
 .account-strip span { color: var(--faint); font: 8px var(--font-geist-mono, monospace); letter-spacing: .14em; }
 .account-strip strong { font: 700 27px var(--font-numeral, var(--font-geist-mono), monospace); letter-spacing: -.02em; color: var(--accent); }

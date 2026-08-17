@@ -247,6 +247,19 @@ export default function Home() {
     return sum + (live == null ? 0 : (live - p.entryPrice) * p.shares);
   }, 0);
   const portfolioValue = account ? account.startingCapital + account.realizedPnl + unrealizedPnl : null;
+  // Capital actually at risk right now: entry cost of every real open position.
+  const investedCost = openPositions.filter((p) => !p.shadow).reduce((sum, p) => sum + p.entryPrice * p.shares, 0);
+  // Present market value of those same positions, using only tickers we have a
+  // real live quote for — a position with no quote contributes its entry cost
+  // rather than an invented current value.
+  const investedValue = openPositions.filter((p) => !p.shadow).reduce((sum, p) => {
+    const live = livePrices[p.ticker];
+    return sum + (live == null ? p.entryPrice * p.shares : live * p.shares);
+  }, 0);
+  const investedPct = account && account.startingCapital > 0 ? (investedCost / account.startingCapital) * 100 : 0;
+  const unrealizedPct = investedCost > 0 ? (unrealizedPnl / investedCost) * 100 : 0;
+  const quotedCount = openPositions.filter((p) => !p.shadow && livePrices[p.ticker] != null).length;
+  const realOpenCount = openPositions.filter((p) => !p.shadow).length;
 
   const highestScoreFirst = (a: Candidate, b: Candidate) =>
     b.score - a.score || new Date(b.scanAt).getTime() - new Date(a.scanAt).getTime();
@@ -352,7 +365,19 @@ export default function Home() {
         <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Contributed cash + closed P&amp;L + live open-position P&amp;L</small></div>
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
         <div><span>TODAY'S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
-        <div><span>OPEN POSITIONS</span><strong>{openPositions.filter((p) => !p.shadow).length}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
+        <div>
+          <span>INVESTED</span>
+          <strong>{money(investedCost)}</strong>
+          <small>{realOpenCount === 0
+            ? `All cash — ${money(account?.startingCapital ?? 0, 0)} uncommitted`
+            : `${investedPct.toFixed(1)}% of account · now ${money(investedValue)}${quotedCount < realOpenCount ? ` · ${quotedCount}/${realOpenCount} live-quoted` : ""}`}</small>
+        </div>
+        <div>
+          <span>UNREALIZED P&L</span>
+          <strong className={unrealizedPnl >= 0 ? "positive" : "negative"}>{realOpenCount === 0 ? "—" : `${unrealizedPnl >= 0 ? "+" : ""}${money(unrealizedPnl)}`}</strong>
+          <small>{realOpenCount === 0 ? "No open positions" : `${unrealizedPct >= 0 ? "+" : ""}${unrealizedPct.toFixed(2)}% on capital at risk · live`}</small>
+        </div>
+        <div><span>OPEN POSITIONS</span><strong>{realOpenCount}/{maxOpenPositions}</strong><small>{closedStats.count >= MIN_VALIDATED_SAMPLE ? `${closedStats.winRate}% observed win rate over ${closedStats.count} closed` : `${closedStats.count}/${MIN_VALIDATED_SAMPLE} closed trades collected before reporting a win rate`}</small></div>
       </section>
 
       <section className="signal-panels">
@@ -378,9 +403,13 @@ export default function Home() {
             <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? "CRYPTO" : p.shadow ? "SHADOW (SIT-OUT DAY)" : "STOCK"}</span><strong>{p.ticker}</strong></div><time>{displayDate(p.entryAt)}</time></div>
             <h3>{p.headline || "—"}</h3>
             <div className="event-numbers">
-              <div><span>ENTRY</span><b>{money(p.entryPrice)}</b></div>
+              <div><span>ENTRY → LIVE</span><b>{money(p.entryPrice)} → {live != null ? money(live) : "—"}</b></div>
               <div><span>CURRENT STOP</span><b>{money(p.stopPrice)}</b></div>
-              <div><span>UNREALIZED</span><b className={unrealized !== null ? (unrealized >= 0 ? "positive" : "negative") : ""}>{unrealized !== null ? `${unrealized >= 0 ? "+" : ""}${money(unrealized)}` : "—"}</b></div>
+              <div>
+                <span>UNREALIZED</span>
+                <b className={unrealized !== null ? (unrealized >= 0 ? "positive" : "negative") : ""}>{unrealized !== null ? `${unrealized >= 0 ? "+" : ""}${money(unrealized)}` : "—"}</b>
+                <em className={`return-pct ${(unrealized ?? 0) >= 0 ? "positive" : "negative"}`}>{live != null ? `${live >= p.entryPrice ? "+" : ""}${(((live - p.entryPrice) / p.entryPrice) * 100).toFixed(2)}%` : "awaiting quote"}</em>
+              </div>
             </div>
             <div className="event-actions">
               <small>{p.shares.toFixed(2)} shares · {p.trailingActivated ? "trailing stop active" : "fixed stop"}</small>

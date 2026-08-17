@@ -1,41 +1,44 @@
-import { quoteSymbolForTicker } from "../../../worker/universe";
+import { isCryptoTicker } from "../../../worker/universe";
 
 const TICKER_PATTERN = /^[A-Z.\-]{1,10}$/;
 
+// Live prices come from Yahoo for the same reason the engine's quotes do:
+// Finnhub rate-limits by origin IP and Cloudflare Workers share egress IPs, so
+// it returned roughly 4 of 20 requested quotes while Yahoo returned 20 of 20.
+// Real observed last price and previous close only — nothing is estimated, and
+// a symbol Yahoo cannot price returns 404 rather than a filled-in guess.
 export async function GET(request: Request) {
-  const apiKey = process.env.FINNHUB_API_KEY;
-  if (!apiKey) {
-    return Response.json(
-      { error: "Live prices are not configured. Add FINNHUB_API_KEY to .env.local (local) or the site's environment variables (hosted), then restart." },
-      { status: 501 }
-    );
-  }
-
   const symbol = new URL(request.url).searchParams.get("symbol")?.trim().toUpperCase() ?? "";
   if (!TICKER_PATTERN.test(symbol)) {
     return Response.json({ error: "Invalid ticker symbol." }, { status: 400 });
   }
 
-  const finnhubUrl = `https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(quoteSymbolForTicker(symbol))}&token=${apiKey}`;
-  const response = await fetch(finnhubUrl);
+  const yahooSymbol = isCryptoTicker(symbol) ? `${symbol}-USD` : symbol;
+  const response = await fetch(
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yahooSymbol)}?interval=1m&range=1d`,
+    { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } },
+  );
   if (!response.ok) {
-    return Response.json({ error: `Finnhub request failed (${response.status}).` }, { status: 502 });
+    return Response.json({ error: `Quote request failed (${response.status}).` }, { status: 502 });
   }
 
-  const data = (await response.json()) as { c?: number; d?: number; dp?: number; h?: number; l?: number; o?: number; pc?: number; t?: number };
-  if (!data.c) {
+  const data = (await response.json()) as {
+    chart?: { result?: { meta?: { regularMarketPrice?: number; chartPreviousClose?: number; regularMarketTime?: number } }[] };
+  };
+  const meta = data.chart?.result?.[0]?.meta;
+  const price = Number(meta?.regularMarketPrice);
+  if (!Number.isFinite(price) || price <= 0) {
     return Response.json({ error: `No quote available for ${symbol}.` }, { status: 404 });
   }
+  const previousClose = Number(meta?.chartPreviousClose);
+  const hasPrevClose = Number.isFinite(previousClose) && previousClose > 0;
 
   return Response.json({
     symbol,
-    price: data.c,
-    change: data.d ?? null,
-    percentChange: data.dp ?? null,
-    high: data.h ?? null,
-    low: data.l ?? null,
-    open: data.o ?? null,
-    previousClose: data.pc ?? null,
-    quotedAt: data.t ? new Date(data.t * 1000).toISOString() : new Date().toISOString(),
+    price,
+    change: hasPrevClose ? price - previousClose : null,
+    percentChange: hasPrevClose ? ((price - previousClose) / previousClose) * 100 : null,
+    previousClose: hasPrevClose ? previousClose : null,
+    quotedAt: meta?.regularMarketTime ? new Date(meta.regularMarketTime * 1000).toISOString() : new Date().toISOString(),
   });
 }
