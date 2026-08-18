@@ -324,7 +324,8 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       await rememberKnowledge(db, ticker, weather.classification, result.signals.find((s) => s.key === "catalyst")?.evidence ?? "Unknown catalyst");
 
       if (result.status === "WATCH" && priceAtScan !== null) {
-        const opened = await tryOpenPosition(db, { candidateRow, storyId: story.id, ticker, priceAtScan, account: currentAccount, weather, now, clock, criticalDown });
+        const opened = await tryOpenPosition(db, { candidateRow, storyId: story.id, ticker, priceAtScan, account: currentAccount, weather, now, clock, criticalDown,
+          sessionAtrPct: (yahooAll.get(ticker)?.atrPct ?? null) === null ? null : (yahooAll.get(ticker)!.atrPct! * Math.sqrt(6.5 * 12)) });
         if (opened) {
           positionsOpened++;
           await db.update(schema.candidates).set({ observationType: "TRADE" }).where(eq(schema.candidates.id, candidateRow.id));
@@ -674,6 +675,7 @@ async function tryOpenPosition(db: Db, input: {
   weather: { classification: string };
   now: Date; clock: MarketClock;
   criticalDown: string[];
+  sessionAtrPct: number | null;
 }): Promise<boolean> {
   // A source marked critical is one Atlas cannot trade safely without: the
   // price feed it values positions from, or the halt feed that stops it buying
@@ -741,7 +743,7 @@ async function tryOpenPosition(db: Db, input: {
   const grossPurchasesToday = todaysPositions.reduce((sum, position) => sum + position.entryPrice * position.shares, 0);
   const availableCash = Math.max(0, equity - grossPurchasesToday);
   const simulatedEntryPrice = executionPrice(input.priceAtScan, "BUY", isCryptoTicker(input.ticker));
-  const plan = computeEntryPlan(equity, simulatedEntryPrice, input.account.riskPerTradePct, input.account.maxOpenPositions, availableCash);
+  const plan = computeEntryPlan(equity, simulatedEntryPrice, input.account.riskPerTradePct, input.account.maxOpenPositions, availableCash, input.sessionAtrPct);
   if (plan.shares <= 0) {
     await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: no settled paper cash remains in today's cash-backed purchase budget.");
     return false;

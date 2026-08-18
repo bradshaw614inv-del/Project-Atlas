@@ -21,18 +21,46 @@ export function executionPrice(observedPrice: number, side: "BUY" | "SELL", isCr
   return side === "BUY" ? observedPrice * (1 + halfCost) : observedPrice * (1 - halfCost);
 }
 
-export function computeEntryPlan(startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number, availableCash = startingCapital) {
+// A stop must sit outside a security's ordinary noise or it is not a stop, it
+// is a coin flip. Measured session range differs enormously by name — around
+// 1.3% for BAC against 2.6% for TSLA — so a single fixed percentage is either
+// too tight for the volatile names or needlessly wide for the calm ones.
+// Atlas's own trade reviews showed the failure mode directly: a position
+// stopped out at -1.35% and recovered minutes later, on a security whose
+// ordinary session range is 1.68%.
+export const ATR_STOP_MULTIPLIER = 1.2;
+export const MIN_STOP_DISTANCE_PCT = 1.0;
+export const MAX_STOP_DISTANCE_PCT = 3.0;
+
+export function stopDistancePctFor(sessionAtrPct: number | null) {
+  if (sessionAtrPct === null || !Number.isFinite(sessionAtrPct) || sessionAtrPct <= 0) return STOP_DISTANCE_PCT;
+  return Math.min(MAX_STOP_DISTANCE_PCT, Math.max(MIN_STOP_DISTANCE_PCT, sessionAtrPct * ATR_STOP_MULTIPLIER));
+}
+
+export function computeEntryPlan(
+  startingCapital: number, entryPrice: number, riskPerTradePct: number, maxOpenPositions: number,
+  availableCash = startingCapital, sessionAtrPct: number | null = null,
+) {
   const riskDollar = (startingCapital * riskPerTradePct) / 100;
   const slotCap = Math.min((startingCapital * (1 - CASH_RESERVE_PCT / 100)) / maxOpenPositions, Math.max(0, availableCash));
-  const shares = Math.max(0, slotCap / entryPrice);
-  // The stop is derived from the fixed risk budget after allocating the equal
-  // slot, and is never wider than the system's original 1.5% maximum.
-  const stopDistance = shares > 0
-    ? Math.min(riskDollar / shares, entryPrice * (STOP_DISTANCE_PCT / 100))
-    : 0;
+
+  // Volatility targeting: the stop is placed where this security's own range
+  // says it belongs, and size is then set so that distance costs exactly the
+  // fixed risk budget. A volatile name gets fewer shares and a wider stop; a
+  // calm name gets more shares and a tighter one. Dollar risk is identical
+  // either way, which is the whole point — risk is held constant, not size.
+  const stopPct = stopDistancePctFor(sessionAtrPct);
+  const stopDistance = entryPrice * (stopPct / 100);
+  const sharesByRisk = stopDistance > 0 ? riskDollar / stopDistance : 0;
+  const sharesBySlot = slotCap / entryPrice;
+  // The slot cap still binds: volatility sizing may only ever reduce exposure
+  // below an equal slot, never lever it up beyond one.
+  const shares = Math.max(0, Math.min(sharesByRisk, sharesBySlot));
+
   return {
     shares,
     initialStopPrice: entryPrice - stopDistance,
+    stopDistancePct: stopPct,
     riskDollar,
   };
 }

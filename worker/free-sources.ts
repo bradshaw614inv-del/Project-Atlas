@@ -10,6 +10,10 @@ export type IndexSnapshot = {
   // over the prior sessions. 1.0 is a normal day; 3.0 means three times the
   // usual crowd. Null when there is not enough real history to compare against.
   relativeVolume: number | null;
+  // Average true range over the session, as a percent of price. This is what
+  // institutional desks size stops from: a stop must sit outside a security's
+  // ordinary noise, and ordinary noise differs enormously between names.
+  atrPct: number | null;
 };
 
 export type PressRelease = { source: string; title: string; url: string; publishedAt: string; tickers: string[] };
@@ -136,12 +140,30 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
   // Median of prior sessions, so one unusual day cannot set the baseline.
   const baseline = priorTotals.length ? priorTotals[Math.floor(priorTotals.length / 2)] : 0;
 
+  // True range per 5-minute bar across everything available, expressed as a
+  // percent of price so it is comparable across securities.
+  const ranges: number[] = [];
+  let previousClose: number | null = null;
+  for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
+    const [high, low, close] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i]].map(Number);
+    if (![high, low, close].every(Number.isFinite)) continue;
+    const trueRange = previousClose === null
+      ? high - low
+      : Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
+    if (Number.isFinite(trueRange) && close > 0) ranges.push((trueRange / close) * 100);
+    previousClose = close;
+  }
+  const atrPct = ranges.length >= 20
+    ? ranges.reduce((sum, value) => sum + value, 0) / ranges.length
+    : null;
+
   return {
     price,
     prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : null,
     changePct: Number.isFinite(prevClose) && prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : null,
     vwap: totalVolume > 0 ? valueVolume / totalVolume : null,
     relativeVolume: baseline > 0 && todayVolume > 0 ? todayVolume / baseline : null,
+    atrPct,
   };
 }
 
