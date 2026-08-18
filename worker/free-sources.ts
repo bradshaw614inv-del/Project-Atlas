@@ -1,5 +1,6 @@
 import { ROBINHOOD_CRYPTO_UNIVERSE, TICKER_UNIVERSE } from "./universe";
 import { parseHaltRecords, type HaltRecord } from "./manipulation";
+import { readTechnicals, type Bar, type TechnicalRead } from "./technicals";
 
 // Real observed values from Yahoo's public chart API: last price, previous
 // close, and a session VWAP computed from its real 5-minute OHLCV bars.
@@ -14,6 +15,9 @@ export type IndexSnapshot = {
   // institutional desks size stops from: a stop must sit outside a security's
   // ordinary noise, and ordinary noise differs enormously between names.
   atrPct: number | null;
+  // Chart read from today's real bars — buyers-in-control evidence, so a story
+  // can be checked against what price is actually doing before acting on it.
+  technicals: TechnicalRead;
 };
 
 export type PressRelease = { source: string; title: string; url: string; publishedAt: string; tickers: string[] };
@@ -157,13 +161,26 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
     ? ranges.reduce((sum, value) => sum + value, 0) / ranges.length
     : null;
 
+  // Today's bars only: the chart read must describe this session, not a
+  // five-day blur.
+  const todayBars: Bar[] = [];
+  for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
+    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(Number);
+    const stamp = stamps[i];
+    if (![high, low, close].every(Number.isFinite) || !Number.isFinite(stamp)) continue;
+    if (dayFormat.format(new Date(stamp * 1000)) !== latestDay) continue;
+    todayBars.push({ high, low, close, volume: Number.isFinite(volume) ? volume : 0 });
+  }
+  const sessionVwap = totalVolume > 0 ? valueVolume / totalVolume : null;
+
   return {
     price,
     prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : null,
     changePct: Number.isFinite(prevClose) && prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : null,
-    vwap: totalVolume > 0 ? valueVolume / totalVolume : null,
+    vwap: sessionVwap,
     relativeVolume: baseline > 0 && todayVolume > 0 ? todayVolume / baseline : null,
     atrPct,
+    technicals: readTechnicals(todayBars, sessionVwap),
   };
 }
 

@@ -159,3 +159,33 @@ test("band analysis withholds a verdict until each band has a real sample", asyn
   assert.equal(refused.readyToSizeByConfidence, false);
   assert.match(refused.verdict, /does not rank them|too weak/);
 });
+
+// Chart confirmation. News says something happened; the chart says whether
+// buyers are currently in control. Atlas's own reviews showed average best-case
+// excursion of +0.40% against average heat of -0.68% — positions going against
+// the entry immediately, which is an entry-timing failure rather than a bad
+// catalyst. Confirmation is a gate, not a bonus: a strong headline must not be
+// able to outvote what price is doing.
+test("chart confirmation gates entry on buyers actually being in control", async () => {
+  const { readTechnicals, confirmBullish } = await import("../worker/technicals.ts");
+  const bars = (closes) => closes.map((c, i) => ({ high: c + 0.1, low: c - 0.1, close: c, volume: 1000 + i }));
+
+  // Steady climb, price above VWAP, not extended.
+  const rising = confirmBullish(readTechnicals(bars([100,100.1,100.2,100.3,100.4,100.5,100.6,100.7,100.8,100.9,101,101.1]), 100.4));
+  assert.equal(rising.confirmed, true, "an orderly uptrend above VWAP must confirm");
+
+  // Same story, but price is under VWAP — sellers hold the session.
+  const belowVwap = confirmBullish(readTechnicals(bars([101,100.9,100.8,100.7,100.6,100.5,100.4,100.3,100.2,100.1,100,99.9]), 100.8));
+  assert.equal(belowVwap.confirmed, false);
+  assert.match(belowVwap.reasons[0], /below session VWAP/);
+
+  // Far above VWAP: the move already happened, entering is chasing.
+  const extended = confirmBullish(readTechnicals(bars([100,100.5,101,101.5,102,102.5,103,103.5,104,104.5,105,105.5]), 100));
+  assert.equal(extended.confirmed, false);
+  assert.ok(extended.reasons.some((r) => /chasing/.test(r)));
+
+  // Too few bars to judge must refuse, never wave through.
+  const thin = confirmBullish(readTechnicals(bars([100,100.1,100.2]), 100));
+  assert.equal(thin.confirmed, false);
+  assert.match(thin.reasons[0], /Not enough real bars/);
+});

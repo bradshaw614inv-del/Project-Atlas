@@ -7,6 +7,7 @@ import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, com
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
 import { assessManipulationRisk } from "./manipulation";
+import { confirmBullish } from "./technicals";
 import { reviewTrade, type ReviewBars } from "./trade-review";
 import { analyzeBands } from "./band-analysis";
 import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
@@ -289,6 +290,13 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         halts: freeSources.halts, now,
       });
 
+      // Chart confirmation. News says something happened; the chart says
+      // whether buyers are currently in control. Requiring both is the
+      // difference between acting on a story and acting on a story the market
+      // already agrees with.
+      const snapshot = yahooAll.get(ticker);
+      const technical = snapshot ? confirmBullish(snapshot.technicals) : null;
+
       const result = manipulation.blocked
         ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: `Manipulation screen: ${manipulation.reasons[0]}` }
         : story.finnhubCategory === "sec-filing"
@@ -324,7 +332,17 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
       await rememberKnowledge(db, ticker, weather.classification, result.signals.find((s) => s.key === "catalyst")?.evidence ?? "Unknown catalyst");
 
-      if (result.status === "WATCH" && priceAtScan !== null) {
+      // A qualifying score still does not trade unless the chart agrees.
+      // Recorded as CAUTION with the chart's own reason, so the observation is
+      // kept and the refusal is explained rather than silently dropped.
+      const technicallyBlocked = result.status === "WATCH" && technical !== null && !technical.confirmed;
+      if (technicallyBlocked) {
+        await db.update(schema.candidates)
+          .set({ status: "CAUTION", reason: `${result.reason} Chart not confirming: ${technical.reasons[0]}` })
+          .where(eq(schema.candidates.id, candidateRow.id));
+      }
+
+      if (result.status === "WATCH" && !technicallyBlocked && priceAtScan !== null) {
         const opened = await tryOpenPosition(db, { candidateRow, storyId: story.id, ticker, priceAtScan, account: currentAccount, weather, now, clock, criticalDown,
           sessionAtrPct: (yahooAll.get(ticker)?.atrPct ?? null) === null ? null : (yahooAll.get(ticker)!.atrPct! * Math.sqrt(6.5 * 12)) });
         if (opened) {
