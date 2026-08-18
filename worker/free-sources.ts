@@ -1,4 +1,5 @@
 import { ROBINHOOD_CRYPTO_UNIVERSE, TICKER_UNIVERSE } from "./universe";
+import { parseHaltRecords, type HaltRecord } from "./manipulation";
 
 // Real observed values from Yahoo's public chart API: last price, previous
 // close, and a session VWAP computed from its real 5-minute OHLCV bars.
@@ -15,6 +16,7 @@ export type PressRelease = { source: string; title: string; url: string; publish
 
 export type FreeSourceSnapshot = {
   haltedSymbols: Set<string>;
+  halts: HaltRecord[];
   macroEventRisk: boolean;
   macroEvidence: string[];
   cryptoPrices: Map<string, number>;
@@ -37,7 +39,11 @@ function xmlValues(xml: string, tag: string) {
 
 async function nasdaqHalts() {
   const xml = await text("https://www.nasdaqtrader.com/rss.aspx?feed=tradehalts");
-  return new Set(xmlValues(xml, "ndaq:IssueSymbol").map((value) => value.toUpperCase()));
+  // Keep the full records: the reason code distinguishes a routine news pause
+  // from the exchange stepping in on disorderly trading, and Atlas previously
+  // discarded it. Symbols are still exposed as a set for the existing gate.
+  const records = parseHaltRecords(xml);
+  return { symbols: new Set(records.filter((r) => !r.resumedAt).map((r) => r.symbol)), records };
 }
 
 async function federalReserveRisk(now: Date) {
@@ -260,7 +266,8 @@ export async function collectFreeSourceSnapshot(now: Date): Promise<FreeSourceSn
   if (indexes.status === "fulfilled") health["Yahoo Finance"] = "LIVE";
   if (wires.status === "fulfilled") health["Press-release wires"] = "LIVE";
   return {
-    haltedSymbols: halts.status === "fulfilled" ? halts.value : new Set(),
+    haltedSymbols: halts.status === "fulfilled" ? halts.value.symbols : new Set(),
+    halts: halts.status === "fulfilled" ? halts.value.records : [],
     macroEventRisk: fed.status === "fulfilled" && fed.value.length > 0,
     macroEvidence: fed.status === "fulfilled" ? fed.value : [],
     cryptoPrices: coinbase.status === "fulfilled" ? coinbase.value : new Map(),

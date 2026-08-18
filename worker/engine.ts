@@ -6,6 +6,7 @@ import { getMarketClock, isForceCloseTime, isWithinCollectionWindow, isWithinEnt
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
+import { assessManipulationRisk } from "./manipulation";
 import { reviewTrade, type ReviewBars } from "./trade-review";
 import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
@@ -278,7 +279,18 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         independentSourceCount,
         relativeVolume: yahooAll.get(ticker)?.relativeVolume ?? null,
       });
-      const result = story.finnhubCategory === "sec-filing"
+      // Manipulation screen runs before scoring can matter: a pump does not
+      // become safe because its headline reads well.
+      const manipulation = assessManipulationRisk({
+        ticker, relativeVolume: yahooAll.get(ticker)?.relativeVolume ?? null,
+        priceChangePct, independentSourceCount,
+        traceableSource: Boolean(story.source.trim() && /^https?:\/\//i.test(story.url)),
+        halts: freeSources.halts, now,
+      });
+
+      const result = manipulation.blocked
+        ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: `Manipulation screen: ${manipulation.reasons[0]}` }
+        : story.finnhubCategory === "sec-filing"
         ? { ...scored, status: "CAUTION" as const, reason: `Primary-source ${story.headline} recorded for corroboration; an SEC filing alone never triggers a trade.` }
         : freeSources.haltedSymbols.has(ticker)
           ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: "Nasdaq reports this security halted or paused; no entry is permitted." }

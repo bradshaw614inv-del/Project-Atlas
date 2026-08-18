@@ -98,3 +98,34 @@ test("extreme relative volume is treated as caution, never as confirmation", () 
   // Unknown volume is neutral, never assumed calm or assumed frantic.
   assert.equal(scoreCandidate({ ...base, relativeVolume: null }).score, normal.score);
 });
+
+// Pump-and-dump defence. The signature is a violent move on volume far outside
+// normal, carried by a single untraceable source, often in a security the
+// exchange has just had to pause. Any one leg alone is ordinary market life;
+// the combination is the pattern, so the block keys on the combination.
+test("manipulation screen blocks the pump signature but not ordinary strength", async () => {
+  const { assessManipulationRisk } = await import("../worker/manipulation.ts");
+  const now = new Date("2026-08-18T15:00:00Z");
+  const base = { ticker: "XYZ", relativeVolume: 1.2, priceChangePct: 2, independentSourceCount: 3, traceableSource: true, halts: [], now };
+
+  assert.equal(assessManipulationRisk(base).blocked, false, "a normal move must pass");
+
+  // Violent + crowded + uncorroborated = the pump signature.
+  const pump = assessManipulationRisk({ ...base, relativeVolume: 8, priceChangePct: 22, independentSourceCount: 1, traceableSource: false });
+  assert.equal(pump.blocked, true);
+  assert.ok(pump.riskScore >= 70);
+
+  // Same violence, but many independent outlets confirm it — real news moves fast too.
+  const realNews = assessManipulationRisk({ ...base, relativeVolume: 6, priceChangePct: 9, independentSourceCount: 4 });
+  assert.equal(realNews.blocked, false, "corroborated strength must not be blocked");
+
+  // Currently halted is an unconditional block.
+  const halted = assessManipulationRisk({ ...base, halts: [{ symbol: "XYZ", reasonCode: "LUDP", haltedAt: "2026-08-18T14:00:00Z", resumedAt: null }] });
+  assert.equal(halted.blocked, true);
+  assert.equal(halted.riskScore, 100);
+
+  // Recently paused for disorder, now busy again — chasing the re-open is blocked.
+  const reopen = assessManipulationRisk({ ...base, relativeVolume: 4,
+    halts: [{ symbol: "XYZ", reasonCode: "LUDP", haltedAt: "2026-08-18T13:00:00Z", resumedAt: "2026-08-18T13:10:00Z" }] });
+  assert.equal(reopen.blocked, true);
+});
