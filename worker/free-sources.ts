@@ -3,7 +3,13 @@ import { ROBINHOOD_CRYPTO_UNIVERSE, TICKER_UNIVERSE } from "./universe";
 // Real observed values from Yahoo's public chart API: last price, previous
 // close, and a session VWAP computed from its real 5-minute OHLCV bars.
 // Nothing here is estimated — if a field is missing it stays null.
-export type IndexSnapshot = { price: number; prevClose: number | null; changePct: number | null; vwap: number | null };
+export type IndexSnapshot = {
+  price: number; prevClose: number | null; changePct: number | null; vwap: number | null;
+  // Today's volume so far divided by the typical volume by this time of day
+  // over the prior sessions. 1.0 is a normal day; 3.0 means three times the
+  // usual crowd. Null when there is not enough real history to compare against.
+  relativeVolume: number | null;
+};
 
 export type PressRelease = { source: string; title: string; url: string; publishedAt: string; tickers: string[] };
 
@@ -62,12 +68,16 @@ async function coinbasePrices() {
 
 type YahooChart = {
   chart?: { result?: { meta?: { regularMarketPrice?: number; chartPreviousClose?: number };
+    timestamp?: number[];
     indicators?: { quote?: { high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[]; volume?: (number | null)[] }[] } }[] };
 };
 
 async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
+  // Five days of 5-minute bars in a single request: today's session drives
+  // price and VWAP, and the prior sessions provide the baseline for relative
+  // volume. Same subrequest cost as one day.
   const data = await json<YahooChart>(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=1d`,
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=5d`,
     { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } },
   );
   const result = data.chart?.result?.[0];
@@ -75,18 +85,57 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
   const prevClose = Number(result?.meta?.chartPreviousClose);
   if (!Number.isFinite(price) || price <= 0) throw new Error(`yahoo ${symbol}: no price`);
   const bars = result?.indicators?.quote?.[0];
+  const stamps = result?.timestamp ?? [];
+
+  // Group bars by calendar day in Eastern time, and track seconds-since-midnight
+  // so today can be compared against the same point in prior sessions.
+  const dayFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" });
+  const timeFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false });
+  const sessions = new Map<string, { seconds: number; volume: number }[]>();
   let valueVolume = 0, totalVolume = 0;
+  let latestDay = "";
+
   for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
     const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(Number);
-    if (![high, low, close, volume].every(Number.isFinite) || volume <= 0) continue;
+    const stamp = stamps[i];
+    if (![high, low, close, volume].every(Number.isFinite) || volume <= 0 || !Number.isFinite(stamp)) continue;
+    const at = new Date(stamp * 1000);
+    const day = dayFormat.format(at);
+    const [hh, mm] = timeFormat.format(at).split(":").map(Number);
+    const seconds = hh * 3600 + mm * 60;
+    if (day > latestDay) latestDay = day;
+    const list = sessions.get(day) ?? [];
+    list.push({ seconds, volume });
+    sessions.set(day, list);
+  }
+
+  // VWAP uses today's session only.
+  for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
+    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(Number);
+    const stamp = stamps[i];
+    if (![high, low, close, volume].every(Number.isFinite) || volume <= 0 || !Number.isFinite(stamp)) continue;
+    if (dayFormat.format(new Date(stamp * 1000)) !== latestDay) continue;
     valueVolume += ((high + low + close) / 3) * volume;
     totalVolume += volume;
   }
+
+  const today = sessions.get(latestDay) ?? [];
+  const cutoff = today.length ? Math.max(...today.map((bar) => bar.seconds)) : 0;
+  const todayVolume = today.reduce((sum, bar) => sum + bar.volume, 0);
+  const priorTotals = Array.from(sessions.entries())
+    .filter(([day]) => day !== latestDay)
+    .map(([, list]) => list.filter((bar) => bar.seconds <= cutoff).reduce((sum, bar) => sum + bar.volume, 0))
+    .filter((total) => total > 0)
+    .sort((a, b) => a - b);
+  // Median of prior sessions, so one unusual day cannot set the baseline.
+  const baseline = priorTotals.length ? priorTotals[Math.floor(priorTotals.length / 2)] : 0;
+
   return {
     price,
     prevClose: Number.isFinite(prevClose) && prevClose > 0 ? prevClose : null,
     changePct: Number.isFinite(prevClose) && prevClose > 0 ? ((price - prevClose) / prevClose) * 100 : null,
     vwap: totalVolume > 0 ? valueVolume / totalVolume : null,
+    relativeVolume: baseline > 0 && todayVolume > 0 ? todayVolume / baseline : null,
   };
 }
 

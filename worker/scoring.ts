@@ -121,6 +121,7 @@ export function scoreCandidate(input: {
   source?: string;
   sourceUrl?: string;
   independentSourceCount?: number;
+  relativeVolume?: number | null;
 }): ScoreResult {
   const blockedUntil = input.ticker && input.now ? washSaleBlockedUntil(input.ticker, input.now) : null;
   if (blockedUntil) {
@@ -145,6 +146,20 @@ export function scoreCandidate(input: {
   const moveScore = moveConfirmationScore(input.priceChangePct);
   const freshness = freshnessScore(input.minutesSincePublished);
   const persistence = input.seenConfirmationEligibleLastScan ? 20 : 0;
+  // Attention penalty. Barber & Odean (2008) find individual investors are net
+  // buyers of attention-grabbing stocks — abnormal volume being the primary
+  // proxy — and that this crowd buying "could temporarily inflate a stock's
+  // price, leading to disappointing subsequent returns". Extreme relative
+  // volume is therefore treated as a reason for caution, never as confirmation.
+  // Normal or mildly elevated volume is not penalised: a real catalyst should
+  // bring some volume with it.
+  const relativeVolume = input.relativeVolume ?? null;
+  const attentionPenalty = relativeVolume === null ? 0
+    : relativeVolume >= 5 ? 12
+    : relativeVolume >= 3 ? 7
+    : relativeVolume >= 2 ? 3
+    : 0;
+
   const traceable = Boolean(input.source?.trim() && /^https?:\/\//i.test(input.sourceUrl ?? ""));
   const independentSourceCount = Math.max(0, input.independentSourceCount ?? (traceable ? 1 : 0));
   const provenancePenalty = !traceable ? 15 : independentSourceCount < 2 ? 5 : 0;
@@ -153,10 +168,14 @@ export function scoreCandidate(input: {
     { key: "price_confirmation", label: "Price confirmation", score: moveScore, max: 25, evidence: input.priceChangePct === null ? "Quote change unavailable" : `${input.priceChangePct.toFixed(2)}% from first observation` },
     { key: "freshness", label: "News freshness", score: freshness, max: 20, evidence: `${Math.max(0, input.minutesSincePublished).toFixed(0)} minutes old` },
     { key: "persistence", label: "Independent rescan confirmation", score: persistence, max: 20, evidence: input.seenConfirmationEligibleLastScan ? "Confirmed on consecutive scan" : "Awaiting consecutive scan" },
+    { key: "attention", label: "Crowd attention", score: -attentionPenalty, max: 0, evidence:
+      relativeVolume === null ? "Relative volume unavailable"
+      : attentionPenalty === 0 ? `${relativeVolume.toFixed(2)}x normal volume — not an attention spike`
+      : `${relativeVolume.toFixed(2)}x normal volume — crowded; attention-driven buying inflates price before it disappoints` },
     { key: "source_verification", label: "Source verification", score: 0, max: 0, evidence: !traceable ? "Missing source name or traceable URL" : independentSourceCount >= 2 ? `${independentSourceCount} independent outlets corroborate this ticker's fresh catalyst set` : `One traceable outlet (${input.source}) — awaiting independent corroboration` },
   ];
-  const analystScore = signals.reduce((sum, signal) => sum + signal.score, 0);
-  const skepticPenalty = (input.priceChangePct === null ? 5 : input.priceChangePct > 6 ? 8 : 0) + provenancePenalty;
+  const analystScore = signals.filter((signal) => signal.score > 0).reduce((sum, signal) => sum + signal.score, 0);
+  const skepticPenalty = (input.priceChangePct === null ? 5 : input.priceChangePct > 6 ? 8 : 0) + provenancePenalty + attentionPenalty;
   const score = Math.max(0, analystScore - skepticPenalty);
 
   if (score >= TRADE_THRESHOLD && input.seenConfirmationEligibleLastScan && moveScore > 0) {

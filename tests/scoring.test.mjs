@@ -13,7 +13,7 @@ test("keeps the live trade threshold at 60 and requires a confirming scan", () =
 
 test("returns independent analyst-versus-skeptic confidence signals", () => {
   const result = scoreCandidate({ ...strong, seenConfirmationEligibleLastScan: true });
-  assert.deepEqual(result.signals.map((signal) => signal.key), ["catalyst", "price_confirmation", "freshness", "persistence", "source_verification"]);
+  assert.deepEqual(result.signals.map((signal) => signal.key), ["catalyst", "price_confirmation", "freshness", "persistence", "attention", "source_verification"]);
   assert.equal(result.score, result.analystScore - result.skepticPenalty);
 });
 
@@ -64,4 +64,37 @@ test("a second ticker cannot open on a story that already holds a slot", () => {
   assert.equal(blockedForSameStory("MSFT", 42), true, "same story must be blocked");
   assert.equal(blockedForSameStory("AMZN", 77), false, "a genuinely different story stays eligible");
   assert.equal(blockedForSameStory("GOOGL", 77), true, "same ticker stays blocked regardless of story");
+});
+
+// Naive reinforcement learning, per Barber & Odean (2011): investors are more
+// likely to repurchase a stock they previously sold at a profit than one sold
+// at a loss — repeating what felt good rather than what was predictive. A
+// system can acquire the same bias if scoring is ever allowed to see a
+// ticker's own trade history. This asserts the input surface stays clean.
+test("scoring cannot condition on a ticker's own prior outcomes", () => {
+  const base = { ...strong, seenConfirmationEligibleLastScan: true };
+  const scored = scoreCandidate(base);
+  // Passing prior-outcome fields must not change anything: they are not read.
+  const withPriorWin = scoreCandidate({ ...base, realizedPnl: 500, atlasEdge: 0.9, priorWins: 10 });
+  const withPriorLoss = scoreCandidate({ ...base, realizedPnl: -500, atlasEdge: -0.9, priorWins: 0 });
+  assert.equal(withPriorWin.score, scored.score, "a past win must not raise the score");
+  assert.equal(withPriorLoss.score, scored.score, "a past loss must not lower the score");
+  assert.equal(withPriorWin.status, withPriorLoss.status);
+});
+
+// Barber & Odean (2008): individual investors are net buyers of
+// attention-grabbing stocks — abnormal volume being the primary proxy — and
+// that crowd buying temporarily inflates price "leading to disappointing
+// subsequent returns". Extreme volume must therefore reduce confidence.
+test("extreme relative volume is treated as caution, never as confirmation", () => {
+  const base = { ...strong, seenConfirmationEligibleLastScan: true, source: "Reuters", sourceUrl: "https://example.com/s", independentSourceCount: 2 };
+  const normal = scoreCandidate({ ...base, relativeVolume: 1.0 });
+  const busy = scoreCandidate({ ...base, relativeVolume: 2.5 });
+  const frenzy = scoreCandidate({ ...base, relativeVolume: 6.0 });
+
+  assert.ok(busy.score < normal.score, "elevated volume must not raise the score");
+  assert.ok(frenzy.score < busy.score, "a volume frenzy must be penalised harder still");
+  assert.equal(frenzy.skepticPenalty - normal.skepticPenalty, 12);
+  // Unknown volume is neutral, never assumed calm or assumed frantic.
+  assert.equal(scoreCandidate({ ...base, relativeVolume: null }).score, normal.score);
 });

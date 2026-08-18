@@ -276,6 +276,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct,
         minutesSincePublished, seenConfirmationEligibleLastScan, source: story.source, sourceUrl: story.url,
         independentSourceCount,
+        relativeVolume: yahooAll.get(ticker)?.relativeVolume ?? null,
       });
       const result = story.finnhubCategory === "sec-filing"
         ? { ...scored, status: "CAUTION" as const, reason: `Primary-source ${story.headline} recorded for corroboration; an SEC filing alone never triggers a trade.` }
