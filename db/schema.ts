@@ -144,6 +144,42 @@ export const experiments = sqliteTable("experiments", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
+// One post-mortem per closed position, built from real intraday bars after the
+// trade is done. This is where Atlas learns: not just what a trade returned,
+// but how it got there — how far it ran in favour before reversing, how close
+// it came to the stop before recovering, and where it went after the exit.
+export const tradeReviews = sqliteTable("trade_reviews", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  positionId: integer("position_id").notNull().references(() => positions.id),
+  reviewedAt: text("reviewed_at").notNull(),
+  ticker: text("ticker").notNull(),
+  // Entry context, denormalised so analysis never depends on a join surviving.
+  entryScore: real("entry_score"),
+  entryBand: text("entry_band").notNull().default(""),
+  catalystLabel: text("catalyst_label").notNull().default(""),
+  marketWeather: text("market_weather").notNull().default(""),
+  entryHourEt: integer("entry_hour_et"),
+  independentSources: integer("independent_sources").notNull().default(0),
+  // Outcome
+  realizedPnl: real("realized_pnl").notNull(),
+  returnPct: real("return_pct").notNull(),
+  exitReason: text("exit_reason").notNull().default(""),
+  holdMinutes: integer("hold_minutes").notNull().default(0),
+  // Excursions: the most useful trade-analysis numbers there are. MFE says how
+  // much was left on the table; MAE says how much heat was taken before the
+  // outcome, and whether the stop sat too close to normal noise.
+  mfePct: real("mfe_pct"),
+  maePct: real("mae_pct"),
+  mfeMinutes: integer("mfe_minutes"),
+  maeMinutes: integer("mae_minutes"),
+  stopDistancePct: real("stop_distance_pct"),
+  // Did price keep going the way of the exit, or reverse right after? A
+  // consistently positive drift after a stop means the stop is too tight.
+  postExitDriftPct: real("post_exit_drift_pct"),
+  // Plain-language observations derived only from the numbers above.
+  findings: text("findings").notNull().default("[]"),
+});
+
 export const knowledgeNodes = sqliteTable("knowledge_nodes", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   key: text("key").notNull().unique(),

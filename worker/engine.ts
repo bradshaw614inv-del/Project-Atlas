@@ -6,6 +6,7 @@ import { getMarketClock, isForceCloseTime, isWithinCollectionWindow, isWithinEnt
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
+import { reviewTrade, type ReviewBars } from "./trade-review";
 import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
@@ -50,6 +51,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
           }
         }
       }
+      try { await reviewClosedTrades(db, now); } catch { /* never fails a scan */ }
       await db.update(schema.scanRuns).set({ finishedAt: new Date().toISOString(), positionsClosed }).where(eq(schema.scanRuns.id, scanRun.id));
       return;
     }
@@ -361,6 +363,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
     // Calibration reads Atlas's own accumulated observations; it must never
     // be able to fail a scan, and it never mutates live scoring config.
+    try { await reviewClosedTrades(db, now); } catch { /* never fails a scan */ }
     try { await calibrateFromHistory(db, now); } catch { /* logged next scan */ }
 
     await db.update(schema.scanRuns).set({
@@ -557,6 +560,74 @@ async function recordConnectionHealth(db: Db, observed: Map<string, { ok: boolea
     }
   }
   return criticalDown;
+}
+
+// Every closed position gets exactly one post-mortem, built from real intraday
+// bars once the trade is finished. Runs a few at a time so it never competes
+// with the scan for the Worker's subrequest budget, and never throws into it.
+async function reviewClosedTrades(db: Db, now: Date, limit = 3) {
+  const reviewed = await db.select({ positionId: schema.tradeReviews.positionId }).from(schema.tradeReviews);
+  const done = new Set(reviewed.map((r) => r.positionId));
+  const closed = await db.select().from(schema.positions)
+    .where(eq(schema.positions.status, "CLOSED")).orderBy(desc(schema.positions.id)).limit(60);
+  const pending = closed.filter((p) => !done.has(p.id) && p.exitAt && p.exitPrice !== null).slice(0, limit);
+
+  for (const position of pending) {
+    let bars: ReviewBars | null = null;
+    try {
+      const symbol = isCryptoTicker(position.ticker) ? `${position.ticker}-USD` : position.ticker;
+      const response = await fetch(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=5d`,
+        { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" }, signal: AbortSignal.timeout(8000) },
+      );
+      if (response.ok) {
+        const data = await response.json() as { chart?: { result?: { timestamp?: number[]; indicators?: { quote?: { high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[] }[] } }[] } };
+        const result = data.chart?.result?.[0];
+        const quote = result?.indicators?.quote?.[0];
+        if (result?.timestamp && quote) bars = { t: result.timestamp, high: quote.high ?? [], low: quote.low ?? [], close: quote.close ?? [] };
+      }
+    } catch { /* review still records what it can without bars */ }
+
+    const review = reviewTrade({
+      entryPrice: position.entryPrice, exitPrice: position.exitPrice!, entryAt: position.entryAt,
+      exitAt: position.exitAt!, initialStopPrice: position.initialStopPrice,
+      realizedPnl: position.realizedPnl ?? 0, exitReason: position.exitReason ?? "",
+    }, bars);
+
+    const candidate = position.candidateId
+      ? (await db.select().from(schema.candidates).where(eq(schema.candidates.id, position.candidateId)).limit(1))[0]
+      : null;
+    let catalystLabel = "";
+    try {
+      const signals = JSON.parse(candidate?.signalBreakdown || "[]") as { key: string; evidence: string }[];
+      catalystLabel = signals.find((signal) => signal.key === "catalyst")?.evidence ?? "";
+    } catch { /* left blank rather than guessed */ }
+
+    const entryHourEt = Number(new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hour12: false })
+      .format(new Date(position.entryAt)).replace(/\D/g, "")) || null;
+
+    await db.insert(schema.tradeReviews).values({
+      positionId: position.id, reviewedAt: now.toISOString(), ticker: position.ticker,
+      entryScore: candidate?.score ?? null, entryBand: candidate?.scoreBand ?? "",
+      catalystLabel, marketWeather: candidate?.marketWeather ?? "", entryHourEt,
+      independentSources: 0,
+      realizedPnl: position.realizedPnl ?? 0,
+      returnPct: ((position.exitPrice! - position.entryPrice) / position.entryPrice) * 100,
+      exitReason: position.exitReason ?? "", holdMinutes: review.holdMinutes,
+      mfePct: review.mfePct, maePct: review.maePct, mfeMinutes: review.mfeMinutes, maeMinutes: review.maeMinutes,
+      stopDistancePct: review.stopDistancePct, postExitDriftPct: review.postExitDriftPct,
+      findings: JSON.stringify(review.findings),
+    });
+
+    if (review.findings.length > 0) {
+      await db.insert(schema.learningJournal).values({
+        kind: "ATTRIBUTION",
+        title: `${position.ticker} post-mortem (${(position.realizedPnl ?? 0) >= 0 ? "+" : ""}$${(position.realizedPnl ?? 0).toFixed(2)})`,
+        detail: review.findings.join(" "),
+        evidence: JSON.stringify({ mfePct: review.mfePct, maePct: review.maePct, postExitDriftPct: review.postExitDriftPct, holdMinutes: review.holdMinutes, exitReason: position.exitReason }),
+      });
+    }
+  }
 }
 
 async function getOrCreateAccountState(db: Db, tradingDay: string) {

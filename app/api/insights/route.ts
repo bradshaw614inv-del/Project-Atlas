@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
-import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns } from "../../../db/schema";
+import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns, tradeReviews } from "../../../db/schema";
 
 const PAPER_TRADE_TARGET = 100;
 const HOLDOUT_TRADE_TARGET = 30;
@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const pnl = realClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const shadowPnl = shadowClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const atlasEdge = realClosed.length >= 30 ? realClosed.reduce((sum, row) => sum + (row.atlasEdge ?? 0), 0) / realClosed.length : null;
+  const reviews = await db.select().from(tradeReviews).orderBy(desc(tradeReviews.id)).limit(60);
   const [connections, alerts] = await Promise.all([
     db.select().from(connectionStatus),
     db.select().from(connectionEvents).orderBy(desc(connectionEvents.id)).limit(25),
@@ -101,6 +102,24 @@ export async function GET(request: Request) {
     validationPolicy: { minSampleSize: PAPER_TRADE_TARGET, holdoutSampleSize: HOLDOUT_TRADE_TARGET, requiresBacktest: true, liveConfigMutationAllowed: false },
     readiness,
     journal, experiments: experimentRows, knowledgeGraph: { nodes, edges }, replay,
+    tradeLearning: (() => {
+      const withMfe = reviews.filter((r) => r.mfePct !== null);
+      const stopped = reviews.filter((r) => r.exitReason === "STOP_LOSS" && r.postExitDriftPct !== null);
+      const avg = (list: number[]) => (list.length ? list.reduce((a, b) => a + b, 0) / list.length : null);
+      return {
+        reviews: reviews.slice(0, 25).map((r) => ({ ...r, findings: JSON.parse(r.findings || "[]") as string[] })),
+        reviewed: reviews.length,
+        avgMfePct: avg(withMfe.map((r) => r.mfePct!)),
+        avgMaePct: avg(reviews.filter((r) => r.maePct !== null).map((r) => r.maePct!)),
+        avgHoldMinutes: avg(reviews.map((r) => r.holdMinutes)),
+        // A stop that is consistently followed by a bounce is sitting inside
+        // normal noise rather than catching a real breakdown.
+        stoppedThenRecovered: stopped.filter((r) => (r.postExitDriftPct ?? 0) > 0).length,
+        stoppedTotal: stopped.length,
+        // How much of the best in-trade move was actually captured.
+        avgCapturedShare: avg(withMfe.filter((r) => (r.mfePct ?? 0) > 0.1).map((r) => (r.returnPct / r.mfePct!) * 100)),
+      };
+    })(),
     connectionHealth: {
       connections: sourceRoles,
       down: downConnections,
