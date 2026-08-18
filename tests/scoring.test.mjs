@@ -189,3 +189,37 @@ test("chart confirmation gates entry on buyers actually being in control", async
   assert.equal(thin.confirmed, false);
   assert.match(thin.reasons[0], /Not enough real bars/);
 });
+
+// Sentiment must be read, not assumed. Ordinary decline verbs were missing from
+// the negative list, so "Palantir stock falls 8% after analyst flags valuation
+// concerns" scored 56 — four points under the gate, and one fresher story away
+// from buying bad news.
+test("negative and risk language is disqualifying", () => {
+  const negatives = [
+    "Palantir stock falls 8% after analyst flags valuation concerns",
+    "Apple shares slide as iPhone demand worries mount",
+    "Nvidia sinks on export restriction fears",
+    "Amazon tumbles amid weak cloud growth",
+    "Boeing under pressure after regulator raises safety questions",
+    "Why Apple stock is a sell right now",
+    "Chevron retreats as oil prices weaken",
+  ];
+  for (const headline of negatives) {
+    const result = scoreCandidate({ ...strong, headline, seenConfirmationEligibleLastScan: true });
+    assert.equal(result.status, "DISQUALIFIED", `must block: ${headline}`);
+  }
+});
+
+// "Something happened and the price moved" is not a thesis. Without an
+// identified catalyst, price confirmation plus freshness plus persistence still
+// summed to 69 and could trade — exactly the attention-driven buying the
+// research cautions against.
+test("a story with no identifiable catalyst cannot reach the trade gate", () => {
+  const vague = scoreCandidate({
+    ...strong, headline: "What is going on with shares today", summary: "",
+    seenConfirmationEligibleLastScan: true, priceChangePct: 2.0, minutesSincePublished: 5,
+  });
+  assert.ok(vague.score < TRADE_THRESHOLD, `scored ${vague.score}, must stay under ${TRADE_THRESHOLD}`);
+  assert.equal(vague.status, "CAUTION");
+  assert.match(vague.reason, /No identifiable catalyst/);
+});

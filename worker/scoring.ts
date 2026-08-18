@@ -6,13 +6,44 @@ import { washSaleBlockedUntil } from "./wash-sale.ts";
 // or invented. If a signal isn't available on Finnhub's free tier (spread, volume,
 // breadth, VWAP), it is left out rather than faked.
 
+// Negative and risk language. This list was previously narrow enough that
+// "Palantir stock falls 8% after analyst flags valuation concerns" and "Apple
+// shares slide as iPhone demand worries mount" both classified as neutral and
+// scored 56 — four points under the trade gate. Ordinary decline verbs were
+// simply absent. Sentiment is checked before anything else, so a headline
+// carrying both good and bad language is treated as bad: refusing a real
+// opportunity costs nothing, buying into bad news costs money.
 const NEGATIVE_KEYWORDS = [
-  "misses estimates", "miss estimates", "cuts guidance", "lowers forecast", "lowers guidance",
-  "downgraded", "downgrades", "lawsuit", "sues", "sued", "investigation", "investigated",
-  "recall", "recalls", "resigns", "resignation", "fraud", "bankruptcy", "delisted", "delisting",
-  "guidance cut", "warns", "warning", "plunges", "plunge", "sec probe", "restated", "restatement",
-  "halted", "halts trading", "layoffs", "job cuts", "cuts jobs", "misses revenue", "profit warning",
-  "falls short", "disappoints", "disappointing", "slashes", "widens loss", "posts loss",
+  // Decline verbs — the most common way a bad day is reported.
+  "falls", "fall ", "fell", "slides", "slide", "slid", "drops", "drop ", "dropped",
+  "sinks", "sink ", "sank", "tumbles", "tumble", "tumbled", "declines", "decline",
+  "declined", "slips", "slip ", "slipped", "retreats", "retreat", "plunges", "plunge",
+  "plunged", "slumps", "slump", "sags", "dips", "dive", "dives", "craters", "collapse",
+  "collapses", "sell-off", "selloff", "sells off", "loses ground", "gives back",
+  "pulls back", "pullback", "worst performer", "laggard", "lags",
+  // Analyst and rating pressure.
+  "downgraded", "downgrades", "downgrade", "cut to sell", "cut to underperform",
+  "underperform", "underweight", "price target cut", "lowers price target",
+  "cuts price target", "sell rating", "bearish", "overvalued", "valuation concerns",
+  "is a sell", "short seller", "short position",
+  // Concern, risk and uncertainty language.
+  "concerns", "concern over", "worries", "worry", "fears", "headwinds", "under pressure",
+  "uncertainty", "doubts", "skeptical", "caution", "warns", "warning", "red flag",
+  "risk of", "threatens", "struggles", "struggling", "troubles", "woes",
+  // Weak fundamentals.
+  "misses estimates", "miss estimates", "missed estimates", "misses revenue",
+  "misses expectations", "falls short", "shortfall", "disappoints", "disappointing",
+  "weak", "weakness", "weaker", "softness", "slowdown", "slowing", "decelerat",
+  "cuts guidance", "guidance cut", "lowers forecast", "lowers guidance", "lowers outlook",
+  "cuts outlook", "trims forecast", "scales back", "profit warning", "widens loss",
+  "posts loss", "net loss", "writedown", "write-down", "impairment",
+  // Legal, regulatory and governance.
+  "lawsuit", "sues", "sued", "investigation", "investigated", "probe", "subpoena",
+  "sec probe", "sec charges", "fined", "penalty", "settlement", "recall", "recalls",
+  "resigns", "resignation", "steps down", "ousted", "fraud", "accounting",
+  "restated", "restatement", "bankruptcy", "delisted", "delisting", "sanctions",
+  "halted", "halts trading", "suspension", "layoffs", "job cuts", "cuts jobs",
+  "restructuring", "delays", "delayed", "postpones", "cancels", "scrapped",
 ];
 
 // Broad, real-world financial-journalism phrasing. Weighted by how strong a genuine
@@ -177,6 +208,19 @@ export function scoreCandidate(input: {
   const analystScore = signals.filter((signal) => signal.score > 0).reduce((sum, signal) => sum + signal.score, 0);
   const skepticPenalty = (input.priceChangePct === null ? 5 : input.priceChangePct > 6 ? 8 : 0) + provenancePenalty + attentionPenalty;
   const score = Math.max(0, analystScore - skepticPenalty);
+
+  // A story Atlas could not identify a catalyst in must never trade. Price
+  // confirmation, freshness and persistence alone summed to 69 — enough to
+  // clear the gate on "something happened and the price moved", which is
+  // precisely the attention-driven buying the research warns against. An
+  // unidentified story stays an observation.
+  if (catalyst.matchedKeyword === null) {
+    return {
+      score: Math.min(score, TRADE_THRESHOLD - 1), status: "CAUTION",
+      reason: `No identifiable catalyst in this story — price moved but nothing explains why, so Atlas records it without acting. ${LIQUIDITY_NOTE}`,
+      signals, analystScore, skepticPenalty,
+    };
+  }
 
   if (score >= TRADE_THRESHOLD && input.seenConfirmationEligibleLastScan && moveScore > 0) {
     return { score, status: "WATCH", reason: `${catalyst.label}, price confirmed, seen on a second consecutive scan. ${LIQUIDITY_NOTE}`, signals, analystScore, skepticPenalty };
