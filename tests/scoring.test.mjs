@@ -223,3 +223,30 @@ test("a story with no identifiable catalyst cannot reach the trade gate", () => 
   assert.equal(vague.status, "CAUTION");
   assert.match(vague.reason, /No identifiable catalyst/);
 });
+
+// A news feed tags an article to every ticker it mentions, so one story arrives
+// labelled for several companies. "Nvidia Strikes Deal With OpenAI As Tenant"
+// was tagged to GOOGL, AMZN and MSFT and opened positions in all three — the
+// catalyst was real, just not real for those companies. A mention is not a
+// catalyst for the company mentioned.
+test("a story must be about the ticker, not merely mention it", async () => {
+  const { isStorySubject } = await import("../worker/universe.ts");
+
+  const nvidiaStory = "Nvidia Strikes Deal With OpenAI As Tenant; Is Nvidia A Buy?";
+  assert.equal(isStorySubject("NVDA", nvidiaStory).isSubject, true, "it is about Nvidia");
+  for (const bystander of ["GOOGL", "AMZN", "MSFT"]) {
+    const verdict = isStorySubject(bystander, nvidiaStory);
+    assert.equal(verdict.isSubject, false, `${bystander} is not the subject`);
+    assert.match(verdict.reason, /never names/);
+  }
+
+  // Market roundups name no subject at all — they are lists.
+  for (const roundup of ["Top S&P500 movers in Friday's session", "What's going on in today's session: dow jones movers"]) {
+    assert.equal(isStorySubject("AMD", roundup).isSubject, false);
+    assert.match(isStorySubject("AMD", roundup).reason, /roundup/);
+  }
+
+  // Genuine single-subject and two-party stories both pass.
+  assert.equal(isStorySubject("CRM", "Salesforce beats estimates and raises full-year guidance").isSubject, true);
+  assert.equal(isStorySubject("XOM", "Chevron and Exxon both report record quarterly profit").isSubject, true);
+});

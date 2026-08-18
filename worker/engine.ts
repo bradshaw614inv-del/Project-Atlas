@@ -11,7 +11,7 @@ import { confirmBullish } from "./technicals";
 import { reviewTrade, type ReviewBars } from "./trade-review";
 import { analyzeBands } from "./band-analysis";
 import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
-import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
+import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, isStorySubject, quoteSymbolForTicker } from "./universe";
 
 type Db = DrizzleD1Database<typeof schema>;
 
@@ -275,6 +275,10 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       }
       const independentSourceCount = corroboratingOutlets.size;
 
+      // Is this story actually about this company, or does the feed merely tag
+      // it? A mention is not a catalyst for the company mentioned.
+      const subject = isStorySubject(ticker, story.headline);
+
       const scored = scoreCandidate({
         ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct,
         minutesSincePublished, seenConfirmationEligibleLastScan, source: story.source, sourceUrl: story.url,
@@ -297,7 +301,9 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       const snapshot = yahooAll.get(ticker);
       const technical = snapshot ? confirmBullish(snapshot.technicals) : null;
 
-      const result = manipulation.blocked
+      const result = !subject.isSubject
+        ? { ...scored, score: Math.min(scored.score, TRADE_THRESHOLD - 1), status: "CAUTION" as const, reason: subject.reason }
+        : manipulation.blocked
         ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: `Manipulation screen: ${manipulation.reasons[0]}` }
         : story.finnhubCategory === "sec-filing"
         ? { ...scored, status: "CAUTION" as const, reason: `Primary-source ${story.headline} recorded for corroboration; an SEC filing alone never triggers a trade.` }
