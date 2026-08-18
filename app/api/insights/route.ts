@@ -1,5 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
+import { analyzeBands } from "../../../worker/band-analysis";
 import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns, tradeReviews } from "../../../db/schema";
 
 const PAPER_TRADE_TARGET = 100;
@@ -102,6 +103,9 @@ export async function GET(request: Request) {
     validationPolicy: { minSampleSize: PAPER_TRADE_TARGET, holdoutSampleSize: HOLDOUT_TRADE_TARGET, requiresBacktest: true, liveConfigMutationAllowed: false },
     readiness,
     journal, experiments: experimentRows, knowledgeGraph: { nodes, edges }, replay,
+    confidenceTest: analyzeBands(reviews.map((row) => ({
+      band: row.entryBand, entryScore: row.entryScore, returnPct: row.returnPct, realizedPnl: row.realizedPnl,
+    }))),
     tradeLearning: (() => {
       const withMfe = reviews.filter((r) => r.mfePct !== null);
       const stopped = reviews.filter((r) => r.exitReason === "STOP_LOSS" && r.postExitDriftPct !== null);

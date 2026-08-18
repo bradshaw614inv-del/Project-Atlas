@@ -129,3 +129,33 @@ test("manipulation screen blocks the pump signature but not ordinary strength", 
     halts: [{ symbol: "XYZ", reasonCode: "LUDP", haltedAt: "2026-08-18T13:00:00Z", resumedAt: "2026-08-18T13:10:00Z" }] });
   assert.equal(reopen.blocked, true);
 });
+
+// The confidence-sizing question must stay unanswered until the sample can
+// answer it. This asserts the analysis refuses to endorse sizing by score on
+// thin data, and only endorses it when bands are genuinely comparable.
+test("band analysis withholds a verdict until each band has a real sample", async () => {
+  const { analyzeBands, MIN_PER_BAND } = await import("../worker/band-analysis.ts");
+
+  const thin = analyzeBands([
+    { band: "60-79", entryScore: 69, returnPct: -1.3, realizedPnl: -34 },
+    { band: "60-79", entryScore: 64, returnPct: 0.4, realizedPnl: 9 },
+  ]);
+  assert.equal(thin.readyToSizeByConfidence, false, "two trades cannot justify sizing by score");
+  assert.match(thin.verdict, /Not yet answerable/);
+
+  // A full, cleanly ordered sample: higher band genuinely returns more.
+  const good = [
+    ...Array.from({ length: MIN_PER_BAND }, (_, i) => ({ band: "60-79", entryScore: 65 + (i % 3), returnPct: 0.1, realizedPnl: 3 })),
+    ...Array.from({ length: MIN_PER_BAND }, (_, i) => ({ band: "80-100", entryScore: 85 + (i % 3), returnPct: 1.4, realizedPnl: 36 })),
+  ];
+  const ready = analyzeBands(good);
+  assert.equal(ready.comparableBands, 2);
+  assert.equal(ready.monotonic, true);
+  assert.equal(ready.readyToSizeByConfidence, true);
+
+  // Inverted: the high band does worse. Must refuse, not shrug.
+  const inverted = good.map((row) => ({ ...row, returnPct: row.band === "80-100" ? -1.2 : 0.5 }));
+  const refused = analyzeBands(inverted);
+  assert.equal(refused.readyToSizeByConfidence, false);
+  assert.match(refused.verdict, /does not rank them|too weak/);
+});

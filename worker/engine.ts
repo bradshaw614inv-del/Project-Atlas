@@ -8,6 +8,7 @@ import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandida
 import { getRecentSecFilings } from "./sec-edgar";
 import { assessManipulationRisk } from "./manipulation";
 import { reviewTrade, type ReviewBars } from "./trade-review";
+import { analyzeBands } from "./band-analysis";
 import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, quoteSymbolForTicker } from "./universe";
 
@@ -505,6 +506,26 @@ async function calibrateFromHistory(db: Db, now: Date) {
       });
     }
   }
+  // Band verdict: does a higher confidence score actually produce a better
+  // outcome? Recomputed daily so the answer arrives on its own once the sample
+  // is large enough, rather than waiting to be asked.
+  const reviewRows = await db.select().from(schema.tradeReviews);
+  const verdict = analyzeBands(reviewRows.map((row) => ({
+    band: row.entryBand, entryScore: row.entryScore, returnPct: row.returnPct, realizedPnl: row.realizedPnl,
+  })));
+  await db.insert(schema.learningJournal).values({
+    kind: "CALIBRATION",
+    title: verdict.readyToSizeByConfidence
+      ? "Confidence-weighted sizing is now supported by evidence"
+      : `Confidence vs outcome — ${verdict.comparableBands} band(s) comparable`,
+    detail: verdict.verdict,
+    evidence: JSON.stringify({
+      correlation: verdict.correlation, sampleSize: verdict.sampleSize,
+      comparableBands: verdict.comparableBands, monotonic: verdict.monotonic,
+      bands: verdict.bands.filter((band) => band.closed > 0),
+    }),
+  });
+
   if (findings.length === 0) return;
 
   await db.insert(schema.learningJournal).values({
