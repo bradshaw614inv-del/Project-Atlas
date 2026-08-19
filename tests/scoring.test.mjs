@@ -271,3 +271,25 @@ test("the article body is read, not just the headline", () => {
   // The headline alone would have missed both.
   assert.equal(classifyCatalyst("Company announces quarterly results", "").matchedKeyword, null);
 });
+
+// An 8-K item code is the company telling the SEC, under legal obligation,
+// exactly what kind of material event occurred — no headline to interpret and
+// no question of whether the story is really about this company. Atlas fetched
+// these filings but discarded the item codes entirely.
+test("SEC 8-K item codes are read as material events", async () => {
+  const { describeFiling } = await import("../worker/sec-edgar.ts");
+
+  assert.equal(describeFiling("2.02,9.01").label, "Results of operations (earnings)");
+  assert.equal(describeFiling("1.01").tone, "POSITIVE");
+  assert.equal(describeFiling("2.06").tone, "NEGATIVE", "a material impairment is bad news");
+  assert.equal(describeFiling("4.02").tone, "NEGATIVE", "financials that cannot be relied upon is bad news");
+  assert.equal(describeFiling("3.01").tone, "NEGATIVE", "a delisting notice is bad news");
+
+  // Any negative code makes the whole filing negative: earnings reported
+  // alongside an impairment is not a clean earnings event.
+  assert.equal(describeFiling("2.02,2.06,9.01").tone, "NEGATIVE");
+
+  // 9.01 is boilerplate attached to nearly everything; a real event wins.
+  assert.notEqual(describeFiling("5.02,9.01").label, "Financial statements and exhibits");
+  assert.equal(describeFiling("").label, "");
+});

@@ -191,7 +191,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       if (!story) {
         const [inserted] = await db.insert(schema.newsStories).values({
           finnhubId: storyKey,
-          headline: `${filing.ticker} files ${filing.form} with the SEC`,
+          headline: filing.eventLabel ? `${filing.ticker}: ${filing.eventLabel} (${filing.form})` : `${filing.ticker} files ${filing.form} with the SEC`,
           summary: filing.description,
           source: "SEC EDGAR",
           url: filing.url,
@@ -301,7 +301,18 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       const snapshot = yahooAll.get(ticker);
       const technical = snapshot ? confirmBullish(snapshot.technicals) : null;
 
-      const result = !subject.isSubject
+      // An SEC 8-K carrying a negative item code is the company itself telling
+      // the regulator something bad happened — an impairment, a delisting
+      // notice, financials that can no longer be relied upon. That outranks any
+      // headline, and no amount of positive press makes it safe to buy.
+      const badFiling = secFilings.find((filing) =>
+        filing.ticker === ticker && filing.eventTone === "NEGATIVE"
+        && (now.getTime() - Date.parse(filing.filedAt)) / 3_600_000 <= 48);
+
+      const result = badFiling
+        ? { ...scored, score: 0, status: "DISQUALIFIED" as const,
+            reason: `SEC filing ${badFiling.form} reports: ${badFiling.eventLabel}. The company disclosed this to the regulator; no entry regardless of press coverage.` }
+        : !subject.isSubject
         ? { ...scored, score: Math.min(scored.score, TRADE_THRESHOLD - 1), status: "CAUTION" as const, reason: subject.reason }
         : manipulation.blocked
         ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: `Manipulation screen: ${manipulation.reasons[0]}` }

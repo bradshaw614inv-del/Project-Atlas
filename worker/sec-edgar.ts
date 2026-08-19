@@ -5,7 +5,53 @@ export type SecFiling = {
   filedAt: string;
   description: string;
   url: string;
+  items: string;          // raw 8-K item codes as filed, e.g. "2.02,9.01"
+  eventLabel: string;     // what those codes mean in plain language
+  eventTone: "POSITIVE" | "NEGATIVE" | "NEUTRAL";
 };
+
+// An 8-K item code is the company telling the SEC, under legal obligation,
+// exactly what kind of material event occurred. It is the most reliable
+// catalyst signal available anywhere for free: no headline to interpret, no
+// publisher spin, no question of whether the story is really about this
+// company. Tone is assigned only where the code itself is unambiguous.
+const EIGHT_K_ITEMS: Record<string, { label: string; tone: "POSITIVE" | "NEGATIVE" | "NEUTRAL" }> = {
+  "1.01": { label: "Entry into a material definitive agreement", tone: "POSITIVE" },
+  "1.02": { label: "Termination of a material agreement", tone: "NEGATIVE" },
+  "1.03": { label: "Bankruptcy or receivership", tone: "NEGATIVE" },
+  "2.01": { label: "Completion of acquisition or disposition", tone: "POSITIVE" },
+  "2.02": { label: "Results of operations (earnings)", tone: "NEUTRAL" },
+  "2.03": { label: "Material direct financial obligation", tone: "NEUTRAL" },
+  "2.04": { label: "Triggering of a financial obligation", tone: "NEGATIVE" },
+  "2.05": { label: "Costs from exit or disposal activities", tone: "NEGATIVE" },
+  "2.06": { label: "Material impairment", tone: "NEGATIVE" },
+  "3.01": { label: "Delisting notice or listing rule failure", tone: "NEGATIVE" },
+  "3.03": { label: "Modification of security holder rights", tone: "NEUTRAL" },
+  "4.01": { label: "Change in certifying accountant", tone: "NEGATIVE" },
+  "4.02": { label: "Previously issued financials cannot be relied upon", tone: "NEGATIVE" },
+  "5.01": { label: "Change in control", tone: "POSITIVE" },
+  "5.02": { label: "Director or principal officer departure or appointment", tone: "NEUTRAL" },
+  "5.03": { label: "Amendment to charter or bylaws", tone: "NEUTRAL" },
+  "7.01": { label: "Regulation FD disclosure", tone: "NEUTRAL" },
+  "8.01": { label: "Other material event", tone: "NEUTRAL" },
+  "9.01": { label: "Financial statements and exhibits", tone: "NEUTRAL" },
+};
+
+// A filing carrying any negative code is negative regardless of what else it
+// contains: a company reporting earnings alongside an impairment is not a
+// clean earnings event.
+export function describeFiling(items: string): { label: string; tone: "POSITIVE" | "NEGATIVE" | "NEUTRAL" } {
+  const codes = items.split(/[,\s]+/).map((code) => code.trim()).filter(Boolean);
+  const known = codes.map((code) => EIGHT_K_ITEMS[code]).filter(Boolean);
+  if (known.length === 0) return { label: "", tone: "NEUTRAL" };
+  const negative = known.find((entry) => entry.tone === "NEGATIVE");
+  if (negative) return { label: negative.label, tone: "NEGATIVE" };
+  const positive = known.find((entry) => entry.tone === "POSITIVE");
+  if (positive) return { label: positive.label, tone: "POSITIVE" };
+  // 9.01 is boilerplate attached to almost everything; prefer a real event.
+  const substantive = known.find((entry) => entry.label !== "Financial statements and exhibits");
+  return substantive ?? known[0];
+}
 
 type TickerMap = Record<string, { cik_str: number; ticker: string; title: string }>;
 type Submissions = {
@@ -62,6 +108,9 @@ export async function getRecentSecFilings(userAgent: string, tickers: string[], 
         ticker,
         accessionNumber,
         form: forms[index],
+        items: itemCodes[index] ?? "",
+        eventLabel: describeFiling(itemCodes[index] ?? "").label,
+        eventTone: describeFiling(itemCodes[index] ?? "").tone,
         filedAt: filedDate.toISOString(),
         description: descriptions[index] || `SEC Form ${forms[index]}`,
         url: `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionPath}/${primaryDocument}`,
