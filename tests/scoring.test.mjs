@@ -293,3 +293,37 @@ test("SEC 8-K item codes are read as material events", async () => {
   assert.notEqual(describeFiling("5.02,9.01").label, "Financial statements and exhibits");
   assert.equal(describeFiling("").label, "");
 });
+
+// Connection health answers whether a source responded. This answers whether it
+// delivered anything, which is the failure that goes unnoticed: every scan
+// yesterday reported success with no error while fetching zero stories, because
+// the subrequest cap had killed the news calls. Health said LIVE.
+test("data sufficiency catches sources that respond but deliver nothing", async () => {
+  const { assessSufficiency } = await import("../worker/data-sufficiency.ts");
+  const healthy = { quotesUsable: 22, quotesRequested: 23, storiesFetched: 60, storiesWithBody: 55,
+    candidatesScored: 40, breadthSample: 20, filingsFound: 2, newsTickersQueried: 10 };
+  const history = Array.from({ length: 8 }, () => healthy);
+
+  assert.equal(assessSufficiency(healthy, history, true).sufficient, true);
+
+  // The exact failure that went undetected: responded fine, delivered nothing.
+  const silentDeath = assessSufficiency({ ...healthy, storiesFetched: 0, storiesWithBody: 0, candidatesScored: 0 }, history, true);
+  assert.equal(silentDeath.blindToMarket, true, "no stories during market hours must be critical");
+  assert.ok(silentDeath.findings.some((f) => f.metric === "news"));
+
+  // Quote starvation makes positions unvaluable — the state Atlas was in at 3/20.
+  const starved = assessSufficiency({ ...healthy, quotesUsable: 3, breadthSample: 3 }, history, true);
+  assert.equal(starved.blindToMarket, true);
+
+  // Headlines with no article text is a warning, not a halt.
+  const noBodies = assessSufficiency({ ...healthy, storiesWithBody: 2 }, history, true);
+  assert.equal(noBodies.blindToMarket, false);
+  assert.ok(noBodies.findings.some((f) => f.metric === "article text"));
+
+  // A collapse against Atlas's own normal is caught without a hardcoded floor.
+  const collapsed = assessSufficiency({ ...healthy, storiesFetched: 5 }, history, true);
+  assert.ok(collapsed.findings.some((f) => f.metric === "story volume"));
+
+  // Outside market hours, no stories is expected rather than alarming.
+  assert.equal(assessSufficiency({ ...healthy, storiesFetched: 0 }, history, false).blindToMarket, false);
+});

@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db";
 import { analyzeBands } from "../../../worker/band-analysis";
-import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns, tradeReviews } from "../../../db/schema";
+import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns, scanYield, tradeReviews } from "../../../db/schema";
 
 const PAPER_TRADE_TARGET = 100;
 const HOLDOUT_TRADE_TARGET = 30;
@@ -23,6 +23,7 @@ export async function GET(request: Request) {
   const shadowPnl = shadowClosed.reduce((sum, row) => sum + (row.realizedPnl ?? 0), 0);
   const atlasEdge = realClosed.length >= 30 ? realClosed.reduce((sum, row) => sum + (row.atlasEdge ?? 0), 0) / realClosed.length : null;
   const reviews = await db.select().from(tradeReviews).orderBy(desc(tradeReviews.id)).limit(60);
+  const yieldRows = await db.select().from(scanYield).orderBy(desc(scanYield.id)).limit(24);
   const [connections, alerts] = await Promise.all([
     db.select().from(connectionStatus),
     db.select().from(connectionEvents).orderBy(desc(connectionEvents.id)).limit(25),
@@ -124,6 +125,26 @@ export async function GET(request: Request) {
         avgCapturedShare: avg(withMfe.filter((r) => (r.mfePct ?? 0) > 0.1).map((r) => (r.returnPct / r.mfePct!) * 100)),
       };
     })(),
+    dataSufficiency: {
+      latest: yieldRows[0] ? { ...yieldRows[0], findings: JSON.parse(yieldRows[0].findings || "[]") } : null,
+      // How many of the recent scans received enough to decide on.
+      sufficientScans: yieldRows.filter((row) => row.sufficient === 1).length,
+      scansChecked: yieldRows.length,
+      // Any finding still active across the recent window, most severe first.
+      activeFindings: (() => {
+        const seen = new Map<string, { metric: string; severity: string; detail: string }>();
+        for (const row of yieldRows.slice(0, 3)) {
+          for (const finding of JSON.parse(row.findings || "[]") as { metric: string; severity: string; detail: string }[]) {
+            if (!seen.has(finding.metric)) seen.set(finding.metric, finding);
+          }
+        }
+        return Array.from(seen.values()).sort((a, b) => (a.severity === "CRITICAL" ? -1 : 1));
+      })(),
+      trend: yieldRows.slice(0, 12).reverse().map((row) => ({
+        scanAt: row.scanAt, stories: row.storiesFetched, quotes: row.quotesUsable,
+        candidates: row.candidatesScored, sufficient: row.sufficient === 1,
+      })),
+    },
     connectionHealth: {
       connections: sourceRoles,
       down: downConnections,

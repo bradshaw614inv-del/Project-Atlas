@@ -2,7 +2,7 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub";
-import { getMarketClock, isForceCloseTime, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours";
+import { getMarketClock, isForceCloseTime, isMarketOpen, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours";
 import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
@@ -10,6 +10,7 @@ import { assessManipulationRisk } from "./manipulation";
 import { confirmBullish } from "./technicals";
 import { reviewTrade, type ReviewBars } from "./trade-review";
 import { analyzeBands } from "./band-analysis";
+import { assessSufficiency, type ScanYield } from "./data-sufficiency";
 import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
 import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, isStorySubject, quoteSymbolForTicker } from "./universe";
 
@@ -26,6 +27,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
   const startedAt = now.toISOString();
   const [scanRun] = await db.insert(schema.scanRuns).values({ startedAt }).returning();
   let storiesFetched = 0, candidatesEvaluated = 0, positionsOpened = 0, positionsClosed = 0;
+  let storiesWithBody = 0;
 
   try {
     const clock = getMarketClock(now);
@@ -170,6 +172,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
           }).returning();
           story = inserted;
           storiesFetched++;
+          if ((item.summary ?? '').length > 60) storiesWithBody++;
         }
         // Keep real historical observations for research, but only let news
         // observed within the action window enter live scoring.
@@ -366,6 +369,45 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
           positionsOpened++;
           await db.update(schema.candidates).set({ observationType: "TRADE" }).where(eq(schema.candidates.id, candidateRow.id));
         }
+      }
+    }
+
+    // Did this scan actually receive enough to decide anything? A source can
+    // respond perfectly and deliver nothing; that failure is silent and is
+    // exactly what happened when the subrequest cap killed the news calls.
+    const currentYield: ScanYield = {
+      quotesUsable: yahooLive, quotesRequested: TICKER_UNIVERSE.length + 3,
+      storiesFetched, storiesWithBody, candidatesScored: candidatesEvaluated,
+      breadthSample: breadth.length, filingsFound: secFilings.length,
+      newsTickersQueried: newsTickers.length,
+    };
+    const history = (await db.select().from(schema.scanYield)
+      .orderBy(desc(schema.scanYield.id)).limit(20))
+      .map((row) => ({
+        quotesUsable: row.quotesUsable, quotesRequested: row.quotesRequested,
+        storiesFetched: row.storiesFetched, storiesWithBody: row.storiesWithBody,
+        candidatesScored: row.candidatesScored, breadthSample: row.breadthSample,
+        filingsFound: row.filingsFound, newsTickersQueried: row.newsTickersQueried,
+      }));
+    const sufficiency = assessSufficiency(currentYield, history, isMarketOpen(clock));
+    await db.insert(schema.scanYield).values({
+      scanAt: startedAt, ...currentYield,
+      sufficient: sufficiency.sufficient ? 1 : 0,
+      findings: JSON.stringify(sufficiency.findings),
+    });
+    // A new finding is worth a journal entry; a persistent one is not worth
+    // repeating every five minutes.
+    for (const finding of sufficiency.findings) {
+      const [seen] = await db.select().from(schema.learningJournal)
+        .where(and(eq(schema.learningJournal.kind, "PATTERN"), eq(schema.learningJournal.title, `Data sufficiency: ${finding.metric}`)))
+        .orderBy(desc(schema.learningJournal.id)).limit(1);
+      const staleEnough = !seen || (now.getTime() - Date.parse(seen.createdAt.replace(" ", "T") + "Z")) / 3_600_000 > 2;
+      if (staleEnough) {
+        await db.insert(schema.learningJournal).values({
+          kind: "PATTERN", title: `Data sufficiency: ${finding.metric}`,
+          detail: `[${finding.severity}] ${finding.detail}`,
+          evidence: JSON.stringify(currentYield),
+        });
       }
     }
 

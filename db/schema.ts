@@ -191,6 +191,24 @@ export const knowledgeNodes = sqliteTable("knowledge_nodes", {
 // Current state of every upstream Atlas depends on. Rows are created the first
 // time a connection is probed, so adding a future connection (a broker, say)
 // needs no migration — only a probe that reports its status.
+// Per-scan yield. Connection health says whether a source responded; this says
+// what it actually delivered, which is the failure that goes unnoticed — every
+// scan can report success while fetching nothing.
+export const scanYield = sqliteTable("scan_yield", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  scanAt: text("scan_at").notNull(),
+  quotesUsable: integer("quotes_usable").notNull().default(0),
+  quotesRequested: integer("quotes_requested").notNull().default(0),
+  storiesFetched: integer("stories_fetched").notNull().default(0),
+  storiesWithBody: integer("stories_with_body").notNull().default(0),
+  candidatesScored: integer("candidates_scored").notNull().default(0),
+  breadthSample: integer("breadth_sample").notNull().default(0),
+  filingsFound: integer("filings_found").notNull().default(0),
+  newsTickersQueried: integer("news_tickers_queried").notNull().default(0),
+  sufficient: integer("sufficient").notNull().default(1),
+  findings: text("findings").notNull().default("[]"),
+});
+
 export const connectionStatus = sqliteTable("connection_status", {
   name: text("name").primaryKey(),
   kind: text("kind").notNull().default("DATA"), // DATA | BROKER
