@@ -327,3 +327,24 @@ test("data sufficiency catches sources that respond but deliver nothing", async 
   // Outside market hours, no stories is expected rather than alarming.
   assert.equal(assessSufficiency({ ...healthy, storiesFetched: 0 }, history, false).blindToMarket, false);
 });
+
+// Never act on a headline alone. A headline can state the opposite of its own
+// article — "Apple stock climbs on new product buzz" over a lede reporting App
+// Store revenue down 18%. Atlas judged stories this way for a day; it was the
+// worst flaw in the system and must not be reachable again.
+test("a story with no article text can never trade, however strong the headline", () => {
+  const perfectHeadline = {
+    ...strong, headline: "Company beats estimates and raises guidance",
+    seenConfirmationEligibleLastScan: true, priceChangePct: 2, minutesSincePublished: 5,
+    source: "Reuters", sourceUrl: "https://example.com/a", independentSourceCount: 3,
+  };
+  // With the article present this is exactly the kind of story Atlas should act on.
+  const withBody = scoreCandidate({ ...perfectHeadline, hasArticleBody: true });
+  assert.equal(withBody.status, "WATCH");
+
+  // The identical story, headline only, must not reach the gate.
+  const headlineOnly = scoreCandidate({ ...perfectHeadline, hasArticleBody: false });
+  assert.ok(headlineOnly.score < TRADE_THRESHOLD);
+  assert.notEqual(headlineOnly.status, "WATCH");
+  assert.match(headlineOnly.reason, /Headline only/);
+});

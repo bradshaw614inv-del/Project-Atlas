@@ -67,6 +67,21 @@ const CATALYST_GROUPS: { weight: number; label: string; keywords: string[] }[] =
   { weight: 26, label: "Contract or deal win", keywords: [
     "awarded contract", "wins contract", "contract win", "awarded a contract", "signs deal",
     "multi-year deal", "strikes deal", "lands deal", "secures deal", "wins order", "receives order",
+    "billion deal", "million deal", "billion contract", "million contract", "billion order",
+    "signs agreement", "inks deal", "inks agreement", "wins bid", "selected by", "chosen by",
+    "expands agreement", "extends contract", "renews contract", "supply agreement",
+  ] },
+  { weight: 24, label: "Capital raise or investment", keywords: [
+    "raises $", "raised $", "secures funding", "closes funding", "senior notes", "credit facility",
+    "investment from", "stake in", "invests $", "funding round",
+  ] },
+  { weight: 22, label: "Institutional or fund inflows", keywords: [
+    "etf inflows", "net inflows", "inflows approach", "inflows top", "adds $", "fund inflows",
+    "institutional demand", "institutional buying",
+  ] },
+  { weight: 20, label: "Regulatory or legal win", keywords: [
+    "wins approval", "receives clearance", "clears regulatory", "wins case", "court rules in favor",
+    "dismissed", "settles favorably", "granted patent", "patent win", "license granted",
   ] },
   { weight: 24, label: "Buyback or dividend increase", keywords: [
     "share buyback", "stock buyback", "buyback program", "increases dividend", "raises dividend",
@@ -78,7 +93,12 @@ const CATALYST_GROUPS: { weight: number; label: string; keywords: string[] }[] =
   ] },
   { weight: 16, label: "Product or partnership news", keywords: [
     "unveils", "launches", "partnership with", "partners with", "teams up with", "new product",
-    "expands into", "strategic partnership",
+    "expands into", "strategic partnership", "rolls out", "debuts", "introduces", "announces launch",
+    "collaboration with", "joint venture", "expands to", "opens new",
+  ] },
+  { weight: 14, label: "Positive company news", keywords: [
+    "good news", "positive news", "boosts outlook", "optimistic", "milestone", "record high",
+    "all-time high", "strong demand", "demand surge", "beats", "outperforms", "momentum",
   ] },
 ];
 
@@ -153,6 +173,7 @@ export function scoreCandidate(input: {
   sourceUrl?: string;
   independentSourceCount?: number;
   relativeVolume?: number | null;
+  hasArticleBody?: boolean;
 }): ScoreResult {
   const blockedUntil = input.ticker && input.now ? washSaleBlockedUntil(input.ticker, input.now) : null;
   if (blockedUntil) {
@@ -208,6 +229,20 @@ export function scoreCandidate(input: {
   const analystScore = signals.filter((signal) => signal.score > 0).reduce((sum, signal) => sum + signal.score, 0);
   const skepticPenalty = (input.priceChangePct === null ? 5 : input.priceChangePct > 6 ? 8 : 0) + provenancePenalty + attentionPenalty;
   const score = Math.max(0, analystScore - skepticPenalty);
+
+  // Headlines alone are not enough to act on, ever. A headline can state the
+  // opposite of its own article: "Apple stock climbs on new product buzz" over
+  // a lede reporting App Store revenue down 18% and mounting legal challenges.
+  // Atlas judged stories this way for a day and it was the single worst flaw in
+  // the system. Without article text a story stays an observation permanently,
+  // no matter how strong the headline reads.
+  if (input.hasArticleBody === false) {
+    return {
+      score: Math.min(score, TRADE_THRESHOLD - 1), status: "CAUTION",
+      reason: `Headline only — no article text available to verify what the story actually says. Atlas will not act on a headline alone. ${LIQUIDITY_NOTE}`,
+      signals, analystScore, skepticPenalty,
+    };
+  }
 
   // A story Atlas could not identify a catalyst in must never trade. Price
   // confirmation, freshness and persistence alone summed to 69 — enough to

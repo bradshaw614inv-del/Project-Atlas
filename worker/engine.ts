@@ -287,6 +287,8 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         minutesSincePublished, seenConfirmationEligibleLastScan, source: story.source, sourceUrl: story.url,
         independentSourceCount,
         relativeVolume: yahooAll.get(ticker)?.relativeVolume ?? null,
+        // Never act on a headline alone — the article's own words must be present.
+        hasArticleBody: (story.summary ?? "").trim().length >= 60,
       });
       // Manipulation screen runs before scoring can matter: a pump does not
       // become safe because its headline reads well.
