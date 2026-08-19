@@ -65,8 +65,11 @@ export type SubjectVerdict = { isSubject: boolean; reason: string };
 // about a company when that company is named in the headline and no other
 // company is named ahead of it. Anything else is a mention, and a mention is
 // not a catalyst for the company mentioned.
-export function isStorySubject(ticker: string, headline: string): SubjectVerdict {
+export function isStorySubject(ticker: string, headline: string, summary = ""): SubjectVerdict {
   const text = headline.toLowerCase();
+  // The summary is consulted only to rescue a story whose headline is vague;
+  // it can never override a headline that clearly leads with another company.
+  const body = `${headline} ${summary}`.toLowerCase();
 
   if (ROUNDUP_PATTERNS.some((pattern) => pattern.test(headline))) {
     return { isSubject: false, reason: "Market roundup, not company news — it lists tickers rather than reporting on one." };
@@ -80,6 +83,16 @@ export function isStorySubject(ticker: string, headline: string): SubjectVerdict
 
   const own = positionOf(ticker);
   if (own < 0) {
+    // A vague headline over a lede that names this company and no other is
+    // still about it — "Company announces quarterly results" followed by a
+    // summary naming Salesforce is a Salesforce story.
+    const aliases = COMPANY_ALIASES[ticker] ?? [ticker.toLowerCase()];
+    const namedInBody = aliases.some((alias) => body.includes(alias));
+    const othersInBody = Object.keys(COMPANY_ALIASES).filter((symbol) => symbol !== ticker)
+      .filter((symbol) => (COMPANY_ALIASES[symbol] ?? []).some((alias) => body.includes(alias)));
+    if (namedInBody && othersInBody.length === 0) {
+      return { isSubject: true, reason: `${ticker} is named in the article body and no other company is.` };
+    }
     return { isSubject: false, reason: `Headline never names ${ticker} — the feed tagged it, the story is not about it.` };
   }
 

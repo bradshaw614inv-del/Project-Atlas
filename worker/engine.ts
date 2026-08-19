@@ -277,7 +277,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
       // Is this story actually about this company, or does the feed merely tag
       // it? A mention is not a catalyst for the company mentioned.
-      const subject = isStorySubject(ticker, story.headline);
+      const subject = isStorySubject(ticker, story.headline, story.summary);
 
       const scored = scoreCandidate({
         ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct,

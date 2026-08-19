@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "../worker/scoring.ts";
+import { classifyCatalyst, classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "../worker/scoring.ts";
 
 const strong = { headline: "Company beats estimates and raises guidance", summary: "Record revenue", priceAtScan: 25, priceChangePct: 2, minutesSincePublished: 20 };
 
@@ -249,4 +249,25 @@ test("a story must be about the ticker, not merely mention it", async () => {
   // Genuine single-subject and two-party stories both pass.
   assert.equal(isStorySubject("CRM", "Salesforce beats estimates and raises full-year guidance").isSubject, true);
   assert.equal(isStorySubject("XOM", "Chevron and Exxon both report record quarterly profit").isSubject, true);
+});
+
+// Atlas scored on headlines alone: the JSON news endpoint returns titles with
+// no summary, so every catalyst and sentiment judgement ran on one line of
+// text. A headline can say the opposite of its own article.
+test("the article body is read, not just the headline", () => {
+  // Positive-sounding headline, bad news underneath.
+  const misleading = classifyCatalyst(
+    "Apple stock climbs on new product buzz",
+    "Investors aren't sure how much Apple can rely on App Store fees as legal challenges mount and commission revenue drops 18%.");
+  assert.equal(misleading.negative, true, "the body's bad news must win over a cheerful headline");
+
+  // Vague headline hiding a real catalyst.
+  const buried = classifyCatalyst(
+    "Company announces quarterly results",
+    "The firm beats estimates and raises guidance for the full year, citing record revenue growth.");
+  assert.equal(buried.negative, false);
+  assert.match(buried.label, /Earnings beat/);
+
+  // The headline alone would have missed both.
+  assert.equal(classifyCatalyst("Company announces quarterly results", "").matchedKeyword, null);
 });

@@ -212,23 +212,37 @@ export type WireStory = { id: string; headline: string; summary: string; source:
 // over exactly that window, so the difference is the gap between a catalyst
 // that can qualify and one that has already aged out before Atlas sees it.
 export async function yahooNews(ticker: string): Promise<WireStory[]> {
-  const data = await json<{ news?: { uuid?: string; title?: string; link?: string; publisher?: string; providerPublishTime?: number }[] }>(
-    `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(ticker)}&newsCount=10&quotesCount=0`,
+  // Yahoo's RSS headline feed carries a real article summary in <description>,
+  // which the JSON search endpoint does not — it returns titles only. Atlas was
+  // therefore judging every story on its headline alone, matching keywords
+  // against a single line of text. The summary is usually the article's lede:
+  // the sentence that says what actually happened and to whom.
+  const xml = await text(
+    `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ticker)}&region=US&lang=en-US`,
     { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } },
   );
+
   const stories: WireStory[] = [];
-  for (const item of data.news ?? []) {
-    const publishedSeconds = Number(item.providerPublishTime);
-    // Every field must be real and traceable; anything missing an id, title,
-    // link or timestamp is dropped rather than backfilled with a guess.
-    if (!item.uuid || !item.title || !item.link || !Number.isFinite(publishedSeconds)) continue;
+  for (const block of xml.split(/<item>/i).slice(1)) {
+    const field = (tag: string) => {
+      const match = block.match(new RegExp(`<${tag}>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</${tag}>`, "i"));
+      return match ? match[1].replace(/<[^>]+>/g, "").trim() : "";
+    };
+    const headline = field("title");
+    const url = field("link");
+    const published = field("pubDate");
+    const guid = field("guid") || url;
+    const publishedAt = new Date(published);
+    // Every field must be real; anything missing an id, title, link or a
+    // parseable timestamp is dropped rather than backfilled with a guess.
+    if (!headline || !url || !guid || Number.isNaN(publishedAt.getTime())) continue;
     stories.push({
-      id: `yahoo:${item.uuid}`,
-      headline: item.title,
-      summary: "",
-      source: item.publisher?.trim() || "Yahoo Finance",
-      url: item.link,
-      publishedAt: new Date(publishedSeconds * 1000).toISOString(),
+      id: `yahoo:${guid}`,
+      headline,
+      summary: field("description"),
+      source: "Yahoo Finance",
+      url,
+      publishedAt: publishedAt.toISOString(),
     });
   }
   return stories;
