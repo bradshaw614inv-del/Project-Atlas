@@ -95,6 +95,10 @@ export async function getRecentSecFilings(userAgent: string, tickers: string[], 
     const acceptanceTimes = (recent.acceptanceDateTime ?? []) as string[];
     const primaryDocuments = (recent.primaryDocument ?? []) as string[];
     const descriptions = (recent.primaryDocDescription ?? []) as string[];
+    // EDGAR publishes the 8-K item codes in a parallel `items` array. This
+    // declaration was missing, so every call reaching a material form threw a
+    // ReferenceError and the whole SEC pathway silently returned nothing.
+    const itemCodes = (recent.items ?? []) as string[];
 
     for (let index = 0; index < forms.length; index++) {
       if (!MATERIAL_FORMS.has(forms[index])) continue;

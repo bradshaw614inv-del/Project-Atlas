@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Generated from wrangler.jsonc by `npm run cf-typegen`; not ours to lint.
+    "worker-configuration.d.ts",
   ]),
 ]);
 

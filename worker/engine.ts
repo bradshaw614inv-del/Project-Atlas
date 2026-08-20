@@ -3,7 +3,8 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub";
 import { getMarketClock, isForceCloseTime, isMarketOpen, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours";
-import { COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT, DEFAULT_MAX_OPEN_POSITIONS, computeEntryPlan, executionPrice, manageStagedStop } from "./positions";
+import { DEFAULT_MAX_OPEN_POSITIONS } from "./positions";
+import { applyRealizedPnl, decideExit, evaluateEntryGuards, preflightEntryGuards } from "./decisions.ts";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
 import { getRecentSecFilings } from "./sec-edgar";
 import { assessManipulationRisk } from "./manipulation";
@@ -52,7 +53,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
           const closed = await manageOpenPosition(db, position, snapshot.price, now, clock);
           if (closed) {
             positionsClosed++;
-            if (!closed.shadow) account = await applyRealizedPnl(db, account, closed.realizedPnl);
+            if (!closed.shadow) account = await persistRealizedPnl(db, account, closed.realizedPnl);
           }
         }
       }
@@ -451,7 +452,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         positionsClosed++;
         // Shadow ("did not buy") positions test the sit-out hypothesis and must never
         // move the real simulated account balance or trip its circuit breakers.
-        if (!closed.shadow) currentAccount = await applyRealizedPnl(db, currentAccount, closed.realizedPnl);
+        if (!closed.shadow) currentAccount = await persistRealizedPnl(db, currentAccount, closed.realizedPnl);
       }
     }
 
@@ -777,77 +778,53 @@ async function tryOpenPosition(db: Db, input: {
   criticalDown: string[];
   sessionAtrPct: number | null;
 }): Promise<boolean> {
-  // A source marked critical is one Atlas cannot trade safely without: the
-  // price feed it values positions from, or the halt feed that stops it buying
-  // a suspended security. If one is down, entries stop — the dashboard says so,
-  // and this is what makes that claim true rather than decorative.
-  if (input.criticalDown.length > 0) {
-    await annotateCandidate(db, input.candidateRow.id, `Qualifies but not taken: ${input.criticalDown.join(", ")} unreachable — entries are blocked until critical feeds recover.`);
-    return false;
-  }
-  if (!isWithinEntryWindow(input.clock)) {
-    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: outside the 10:00-3:45 ET entry window.");
-    return false;
-  }
-  if (input.account.dailyLossShutdown) {
-    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: daily circuit breaker already tripped.");
-    return false;
-  }
-
   const isShadow = input.weather.classification === "SIT_OUT";
-  const openPositions = await db.select().from(schema.positions).where(and(eq(schema.positions.status, "OPEN"), eq(schema.positions.shadow, isShadow ? 1 : 0)));
 
-  const maxOpenPositions = input.account.maxOpenPositions;
-  if (!isShadow && openPositions.length >= maxOpenPositions) {
-    await annotateCandidate(db, input.candidateRow.id, `Qualifies but not taken: max open positions reached (${maxOpenPositions}/${maxOpenPositions}).`);
-    return false;
-  }
-  if (openPositions.some((p) => p.ticker === input.ticker)) {
-    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: a position on this ticker is already open.");
-    return false;
-  }
-  // One story, one position. News feeds tag a single article to many tickers —
-  // a single "Nvidia strikes deal with OpenAI" piece opened GOOGL, AMZN and
-  // MSFT simultaneously, putting ~60% of the account behind one headline. Those
-  // are not independent bets: if the story is wrong, every position built on it
-  // is wrong together, which defeats the diversification the equal-slot design
-  // assumes. The first ticker to qualify on a story takes the slot; the rest are
-  // recorded as observations with the reason stated.
-  const sameStory = openPositions.find((p) => p.storyId !== null && p.storyId === input.storyId);
-  if (sameStory) {
-    await annotateCandidate(db, input.candidateRow.id, `Qualifies but not taken: ${sameStory.ticker} already holds the slot for this same story — one story, one position.`);
+  // Rejected before the queries below: these three guards need nothing from the
+  // database, and this runs per candidate per scan against a subrequest budget.
+  const preflight = preflightEntryGuards({
+    criticalDown: input.criticalDown,
+    withinEntryWindow: isWithinEntryWindow(input.clock),
+    account: input.account,
+  });
+  if (preflight && !preflight.allowed) {
+    await annotateCandidate(db, input.candidateRow.id, preflight.reason);
     return false;
   }
 
+  // Shadow positions are tracked separately, so the slot and cash limits below
+  // only ever compare a candidate against positions of its own kind.
+  const openPositions = await db.select().from(schema.positions)
+    .where(and(eq(schema.positions.status, "OPEN"), eq(schema.positions.shadow, isShadow ? 1 : 0)));
   const lastClosed = await db.select().from(schema.positions)
     .where(and(eq(schema.positions.ticker, input.ticker), eq(schema.positions.status, "CLOSED")))
     .orderBy(desc(schema.positions.exitAt)).limit(1);
-  if (lastClosed[0]?.exitAt) {
-    const minsSinceClose = (input.now.getTime() - new Date(lastClosed[0].exitAt).getTime()) / 60000;
-    if (minsSinceClose < COOLDOWN_MINUTES) {
-      await annotateCandidate(db, input.candidateRow.id, `Qualifies but not taken: in its ${COOLDOWN_MINUTES}-minute stop-out cooldown.`);
-      return false;
-    }
-  }
-
-  // Conservative Robinhood cash-account model: every buy is fully cash-backed,
-  // and intraday sale proceeds are not recycled into new entries. Crypto proceeds
-  // settle instantly at Robinhood, but the shared daily cap intentionally applies
-  // the stricter stock-cash rule to the mixed portfolio.
-  const equity = Math.max(0, input.account.startingCapital + input.account.realizedPnl);
   const dayStart = `${input.clock.tradingDay}T00:00:00.000Z`;
   const todaysPositions = await db.select().from(schema.positions).where(and(
     eq(schema.positions.shadow, isShadow ? 1 : 0),
     gte(schema.positions.entryAt, dayStart),
   ));
-  const grossPurchasesToday = todaysPositions.reduce((sum, position) => sum + position.entryPrice * position.shares, 0);
-  const availableCash = Math.max(0, equity - grossPurchasesToday);
-  const simulatedEntryPrice = executionPrice(input.priceAtScan, "BUY", isCryptoTicker(input.ticker));
-  const plan = computeEntryPlan(equity, simulatedEntryPrice, input.account.riskPerTradePct, input.account.maxOpenPositions, availableCash, input.sessionAtrPct);
-  if (plan.shares <= 0) {
-    await annotateCandidate(db, input.candidateRow.id, "Qualifies but not taken: no settled paper cash remains in today's cash-backed purchase budget.");
+
+  const decision = evaluateEntryGuards({
+    ticker: input.ticker,
+    storyId: input.storyId,
+    priceAtScan: input.priceAtScan,
+    now: input.now,
+    account: input.account,
+    criticalDown: input.criticalDown,
+    withinEntryWindow: isWithinEntryWindow(input.clock),
+    isShadow,
+    openPositions,
+    todaysPositions,
+    lastClosedExitAt: lastClosed[0]?.exitAt ?? null,
+    sessionAtrPct: input.sessionAtrPct,
+  });
+
+  if (!decision.allowed) {
+    await annotateCandidate(db, input.candidateRow.id, decision.reason);
     return false;
   }
+  const { plan, entryPrice: simulatedEntryPrice } = decision;
 
   const [openedPosition] = await db.insert(schema.positions).values({
     ticker: input.ticker,
@@ -871,32 +848,28 @@ async function tryOpenPosition(db: Db, input: {
 }
 
 async function manageOpenPosition(db: Db, position: typeof schema.positions.$inferSelect, currentPrice: number, now: Date, clock: MarketClock) {
-  const forceClose = isForceCloseTime(clock);
-  const staged = manageStagedStop({
+  const decision = decideExit({
+    ticker: position.ticker,
     entryPrice: position.entryPrice,
-    currentPrice,
+    shares: position.shares,
     highWaterMark: position.highWaterMark,
     stopPrice: position.stopPrice,
     trailingActivated: !!position.trailingActivated,
-  });
+  }, currentPrice, isForceCloseTime(clock));
 
-  for (const event of staged.events) {
+  for (const event of decision.events) {
     await db.insert(schema.positionEvents).values({ positionId: position.id, at: now.toISOString(), type: event.type, price: currentPrice, detail: event.detail });
   }
 
-  const hitStop = currentPrice <= staged.stopPrice;
-  if (!forceClose && !hitStop) {
+  const { stopPrice, highWaterMark, trailingActivated } = decision;
+  if (!decision.close) {
     await db.update(schema.positions).set({
-      stopPrice: staged.stopPrice, highWaterMark: staged.highWaterMark, trailingActivated: staged.trailingActivated ? 1 : 0, updatedAt: now.toISOString(),
+      stopPrice, highWaterMark, trailingActivated: trailingActivated ? 1 : 0, updatedAt: now.toISOString(),
     }).where(eq(schema.positions.id, position.id));
     return null;
   }
 
-  const observedExit = hitStop ? staged.stopPrice : currentPrice;
-  const exitPrice = executionPrice(observedExit, "SELL", isCryptoTicker(position.ticker));
-  const realizedPnl = (exitPrice - position.entryPrice) * position.shares;
-  const exitReason = forceClose && !hitStop ? "MARKET_CLOSE" : staged.trailingActivated ? "TRAILING_STOP" : "STOP_LOSS";
-  const returnPct = ((exitPrice - position.entryPrice) / position.entryPrice) * 100;
+  const { exitPrice, realizedPnl, exitReason, returnPct } = decision;
   const candidate = position.candidateId ? (await db.select().from(schema.candidates).where(eq(schema.candidates.id, position.candidateId)).limit(1))[0] : null;
   const expectedWinProbability = candidate ? Math.min(0.95, Math.max(0.05, candidate.score / 100)) : 0.5;
   const actualOutcome = realizedPnl > 0 ? 1 : 0;
@@ -905,7 +878,7 @@ async function manageOpenPosition(db: Db, position: typeof schema.positions.$inf
 
   await db.update(schema.positions).set({
     status: "CLOSED", exitPrice, exitAt: now.toISOString(), exitReason, realizedPnl, attribution, atlasEdge,
-    stopPrice: staged.stopPrice, highWaterMark: staged.highWaterMark, trailingActivated: staged.trailingActivated ? 1 : 0, updatedAt: now.toISOString(),
+    stopPrice, highWaterMark, trailingActivated: trailingActivated ? 1 : 0, updatedAt: now.toISOString(),
   }).where(eq(schema.positions.id, position.id));
 
   await db.insert(schema.positionEvents).values({ positionId: position.id, at: now.toISOString(), type: "CLOSED", price: exitPrice, detail: `${exitReason}: realized ${realizedPnl >= 0 ? "+" : ""}$${realizedPnl.toFixed(2)}` });
@@ -914,15 +887,11 @@ async function manageOpenPosition(db: Db, position: typeof schema.positions.$inf
   return { realizedPnl, shadow: !!position.shadow };
 }
 
-async function applyRealizedPnl(db: Db, account: typeof schema.accountState.$inferSelect, realizedPnl: number) {
-  const dailyRealizedPnl = account.dailyRealizedPnl + realizedPnl;
-  const consecutiveLosses = realizedPnl < 0 ? account.consecutiveLosses + 1 : 0;
-  const dailyLossDollarLimit = (account.startingCapital * DAILY_LOSS_LIMIT_PCT) / 100;
-  const dailyLossShutdown = dailyRealizedPnl <= -dailyLossDollarLimit || consecutiveLosses >= 2 ? 1 : 0;
+async function persistRealizedPnl(db: Db, account: typeof schema.accountState.$inferSelect, realizedPnl: number) {
+  const delta = applyRealizedPnl(account, realizedPnl);
 
   const [updated] = await db.update(schema.accountState).set({
-    realizedPnl: account.realizedPnl + realizedPnl,
-    dailyRealizedPnl, consecutiveLosses, dailyLossShutdown,
+    ...delta,
     updatedAt: new Date().toISOString(),
   }).where(eq(schema.accountState.id, 1)).returning();
 
