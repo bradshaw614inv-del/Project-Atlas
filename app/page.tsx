@@ -5,16 +5,14 @@ import {
   COOLDOWN_MINUTES, DAILY_LOSS_LIMIT_PCT,
   DEFAULT_MAX_OPEN_POSITIONS, DEFAULT_RISK_PER_TRADE_PCT, STOP_DISTANCE_PCT, TRAILING_DISTANCE_PCT,
 } from "../worker/positions";
+import { getMarketClock, isMarketOpen } from "../worker/market-hours.ts";
+import { isCryptoTicker } from "../worker/universe.ts";
+import { assetClass, displayDate, flagTone, money, portfolioTotals, timeAgo } from "./dashboard-format.ts";
 
 const STATE_POLL_MS = 10000;
 const CANDIDATES_POLL_MS = 12000;
 const INSIGHTS_POLL_MS = 12000;
 const MIN_VALIDATED_SAMPLE = 100;
-const CRYPTO_TICKERS = new Set(["BTC", "ETH", "SOL", "XRP"]);
-
-function assetClass(ticker: string) {
-  return CRYPTO_TICKERS.has(ticker) ? `crypto crypto-${ticker.toLowerCase()}` : "stock";
-}
 
 type Account = {
   startingCapital: number; maxOpenPositions: number; riskPerTradePct: number;
@@ -43,30 +41,12 @@ type KGNode = { id: number; key: string; type: string; label: string; metadata: 
 type KGEdge = { id: number; fromKey: string; toKey: string; relation: string; weight: number; evidenceCount: number };
 type Insights = { threshold: number; provenance: { providerCount: number; providers: string[]; outletCount: number; outlets: string[]; traceableStories: number; storiesChecked: number; sourceRoles?: { name: string; role: string; status: string; critical?: boolean; detail?: string }[] }; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: KGNode[]; edges: KGEdge[] }; connectionHealth?: { connections: { name: string; role: string; status: string; critical: boolean; detail: string }[]; down: { name: string; status: string; critical: boolean; detail: string }[]; criticalDown: boolean; alerts: { id: number; at: string; name: string; fromStatus: string; toStatus: string; severity: string; detail: string }[] } };
 
-function money(n: number, digits = 2) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits }).format(n);
-}
-function displayDate(value: string) {
-  return new Date(value).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-function timeAgo(value: string) {
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s ago`;
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-  return `${Math.floor(seconds / 3600)}h ago`;
-}
-
-// Regular US session in Eastern time, evaluated from the viewer's clock so the
-// dashboard can label a stored verdict as stale the moment the bell rings.
-// Holidays aren't in any free feed Atlas trusts, so they aren't inferred here.
+// Evaluated from the viewer's clock so the dashboard can label a stored verdict
+// as stale the moment the bell rings. This is the engine's own session rule
+// rather than a second copy of it — the two used to be separate implementations
+// and could disagree about whether the market was open.
 function isMarketOpenNow(timestamp: number) {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York", weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(new Date(timestamp));
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  if (!["Mon", "Tue", "Wed", "Thu", "Fri"].includes(get("weekday"))) return false;
-  const minutes = Number(get("hour")) * 60 + Number(get("minute"));
-  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+  return isMarketOpen(getMarketClock(new Date(timestamp)));
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -237,33 +217,12 @@ export default function Home() {
     }
   }
 
-  const closedStats = useMemo(() => {
-    const real = closedPositions.filter((p) => !p.shadow);
-    const wins = real.filter((p) => (p.realizedPnl ?? 0) > 0).length;
-    return { count: real.length, wins, winRate: real.length ? Math.round((wins / real.length) * 100) : null };
-  }, [closedPositions]);
-  const unrealizedPnl = openPositions.filter((p) => !p.shadow).reduce((sum, p) => {
-    const live = livePrices[p.ticker];
-    return sum + (live == null ? 0 : (live - p.entryPrice) * p.shares);
-  }, 0);
-  const portfolioValue = account ? account.startingCapital + account.realizedPnl + unrealizedPnl : null;
-  // Capital actually at risk right now: entry cost of every real open position.
-  const investedCost = openPositions.filter((p) => !p.shadow).reduce((sum, p) => sum + p.entryPrice * p.shares, 0);
-  // Present market value of those same positions, using only tickers we have a
-  // real live quote for — a position with no quote contributes its entry cost
-  // rather than an invented current value.
-  const investedValue = openPositions.filter((p) => !p.shadow).reduce((sum, p) => {
-    const live = livePrices[p.ticker];
-    return sum + (live == null ? p.entryPrice * p.shares : live * p.shares);
-  }, 0);
-  // Slots are sized from equity (contributed capital plus realized P&L), so the
-  // percentage has to divide by the same basis. Dividing by contributed capital
-  // alone reported a fully-invested account as 100.1%.
-  const equityBasis = account ? account.startingCapital + account.realizedPnl : 0;
-  const investedPct = equityBasis > 0 ? (investedCost / equityBasis) * 100 : 0;
-  const unrealizedPct = investedCost > 0 ? (unrealizedPnl / investedCost) * 100 : 0;
-  const quotedCount = openPositions.filter((p) => !p.shadow && livePrices[p.ticker] != null).length;
-  const realOpenCount = openPositions.filter((p) => !p.shadow).length;
+  const totals = useMemo(
+    () => portfolioTotals(openPositions, closedPositions, livePrices, account),
+    [openPositions, closedPositions, livePrices, account],
+  );
+  const closedStats = { count: totals.closedCount, wins: totals.wins, winRate: totals.winRate };
+  const { unrealizedPnl, portfolioValue, investedCost, investedValue, investedPct, unrealizedPct, quotedCount, realOpenCount } = totals;
 
   const highestScoreFirst = (a: Candidate, b: Candidate) =>
     b.score - a.score || new Date(b.scanAt).getTime() - new Date(a.scanAt).getTime();
@@ -404,7 +363,7 @@ export default function Home() {
           const live = livePrices[p.ticker];
           const unrealized = live ? (live - p.entryPrice) * p.shares : null;
           return <article className="event-card" key={p.id}>
-            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? "CRYPTO" : p.shadow ? "SHADOW (SIT-OUT DAY)" : "STOCK"}</span><strong>{p.ticker}</strong></div><time>{displayDate(p.entryAt)}</time></div>
+            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{isCryptoTicker(p.ticker) ? "CRYPTO" : p.shadow ? "SHADOW (SIT-OUT DAY)" : "STOCK"}</span><strong>{p.ticker}</strong></div><time>{displayDate(p.entryAt)}</time></div>
             <h3>{p.headline || "—"}</h3>
             <div className="event-numbers">
               <div><span>ENTRY → LIVE</span><b>{money(p.entryPrice)} → {live != null ? money(live) : "—"}</b></div>
@@ -444,7 +403,7 @@ export default function Home() {
           </button>
         ) : <div className="event-grid">{closedPositions.map((p) => (
           <article className="event-card" key={p.id}>
-            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{CRYPTO_TICKERS.has(p.ticker) ? `CRYPTO · ${p.shadow ? "SHADOW" : p.exitReason}` : p.shadow ? "SHADOW" : p.exitReason}</span><strong>{p.ticker}</strong></div><time>{p.exitAt ? displayDate(p.exitAt) : ""}</time></div>
+            <div className={`event-top ${assetClass(p.ticker)}`}><div><span className="category">{isCryptoTicker(p.ticker) ? `CRYPTO · ${p.shadow ? "SHADOW" : p.exitReason}` : p.shadow ? "SHADOW" : p.exitReason}</span><strong>{p.ticker}</strong></div><time>{p.exitAt ? displayDate(p.exitAt) : ""}</time></div>
             <h3>{p.headline || "—"}</h3>
             <div className="event-numbers">
               <div><span>ENTRY → EXIT</span><b>{money(p.entryPrice)} → {p.exitPrice ? money(p.exitPrice) : "—"}</b></div>
@@ -534,7 +493,7 @@ function CandidateRow({ c }: { c: Candidate }) {
   return <article className={`candidate-row status-${c.status.toLowerCase()} ${assetClass(c.ticker)}`}>
     <div className="candidate-badge">{c.status}</div>
     <div className="candidate-main">
-      <div className="candidate-top"><strong>{c.ticker}</strong>{CRYPTO_TICKERS.has(c.ticker) && <em>CRYPTO</em>}<span>{c.score.toFixed(0)}/100</span><time>{timeAgo(c.scanAt)}</time></div>
+      <div className="candidate-top"><strong>{c.ticker}</strong>{isCryptoTicker(c.ticker) && <em>CRYPTO</em>}<span>{c.score.toFixed(0)}/100</span><time>{timeAgo(c.scanAt)}</time></div>
       <p className="candidate-headline">{c.headline}{c.source && <span className="candidate-source"> — {c.source}</span>}{c.sourceUrl && <a href={c.sourceUrl} target="_blank" rel="noreferrer" className="candidate-link">↗</a>}</p>
       <p className="candidate-reason">{c.reason}</p>
       {c.signals?.length > 0 && <details className="score-breakdown"><summary>Confidence breakdown · analyst {c.analystScore.toFixed(0)} − skeptic {c.skepticPenalty.toFixed(0)}</summary>{c.signals.map((signal) => <div key={signal.key}><b>{signal.label}</b><span>{signal.score.toFixed(1)}/{signal.max}</span><small>{signal.evidence}</small></div>)}</details>}
@@ -698,20 +657,6 @@ function HudStrip({ threshold, liveScore, scoreDelta, topTicker, topBand, topSta
 // Reads the true direction out of a real weather flag so its status dot can
 // be colored honestly: green/red only when the flag itself carries a
 // measured value, neutral for anything unavailable or informational.
-function flagTone(flag: string): "positive" | "negative" | "neutral" {
-  if (/unavailable|completeness|will not infer/i.test(flag)) return "neutral";
-  const breadth = flag.match(/(\d+) advancing \/ (\d+) declining/i);
-  if (breadth) return Number(breadth[1]) >= Number(breadth[2]) ? "positive" : "negative";
-  if (/above vwap/i.test(flag)) return "positive";
-  if (/below vwap/i.test(flag)) return "negative";
-  if (/event risk|halted/i.test(flag)) return "negative";
-  const volatility = flag.match(/volatility proxy ([+-][\d.]+)%/i);
-  if (volatility) return Number(volatility[1]) > 0.5 ? "negative" : "positive";
-  const pct = flag.match(/([+-][\d.]+)%/);
-  if (pct) return Number(pct[1]) >= 0 ? "positive" : "negative";
-  return "neutral";
-}
-
 // Market weather as a live instrument: the dial needle tracks real weather
 // data completeness, the classification reads in its true severity color,
 // and every flag pill carries a dot colored by its own measured direction.

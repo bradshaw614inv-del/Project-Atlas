@@ -2,6 +2,7 @@ import { desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/index.ts";
 import { accountState, accountTransactions, marketWeatherLog, scanRuns } from "../../../db/schema.ts";
 import { DEFAULT_MAX_OPEN_POSITIONS } from "../../../worker/positions.ts";
+import { isAccountRequestError, parseAccountRequest } from "../../../worker/account-requests.ts";
 
 export async function GET() {
   const db = getDb();
@@ -27,27 +28,27 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const body = (await request.json()) as { action?: string; amount?: number; maxOpenPositions?: number; riskPerTradePct?: number };
+
+  // Validate before acquiring the database: a malformed request should never
+  // reach D1, and this keeps the bounds testable on their own.
+  const parsed = parseAccountRequest(body);
+  if (isAccountRequestError(parsed)) {
+    return Response.json({ error: parsed.error }, { status: parsed.status });
+  }
+
   const db = getDb();
 
-  if (body.action === "ADD_FUNDS") {
-    const amount = Number(body.amount);
-    if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000_000) {
-      return Response.json({ error: "amount must be a positive number no greater than $10,000,000." }, { status: 400 });
-    }
+  if (parsed.kind === "ADD_FUNDS") {
     const [existingAccount] = await db.select().from(accountState).where(eq(accountState.id, 1)).limit(1);
     const currentCapital = existingAccount?.startingCapital ?? 10000;
-    const balanceAfter = currentCapital + amount;
+    const balanceAfter = currentCapital + parsed.amount;
     if (!existingAccount) await db.insert(accountState).values({ id: 1, startingCapital: balanceAfter });
     else await db.update(accountState).set({ startingCapital: balanceAfter, updatedAt: new Date().toISOString() }).where(eq(accountState.id, 1));
-    await db.insert(accountTransactions).values({ type: "CONTRIBUTION", amount, balanceAfter });
+    await db.insert(accountTransactions).values({ type: "CONTRIBUTION", amount: parsed.amount, balanceAfter });
     return Response.json({ ok: true, balanceAfter });
   }
 
-  const riskPerTradePct = Number(body.riskPerTradePct);
-  if (!Number.isFinite(riskPerTradePct) || riskPerTradePct <= 0 || riskPerTradePct > 5) {
-    return Response.json({ error: "riskPerTradePct must be between 0 and 5." }, { status: 400 });
-  }
-
+  const { riskPerTradePct } = parsed;
   const existing = await db.select({ id: accountState.id }).from(accountState).where(eq(accountState.id, 1)).limit(1);
   if (existing.length === 0) {
     await db.insert(accountState).values({ id: 1, maxOpenPositions: DEFAULT_MAX_OPEN_POSITIONS, riskPerTradePct });

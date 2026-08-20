@@ -54,16 +54,26 @@ test("a persisted candidate still cannot trade without positive quote confirmati
 // One story, one position. Yahoo tags a single article to many tickers, so
 // without this gate a lone headline opened GOOGL, AMZN and MSFT at once —
 // roughly 60% of the account riding on whether one story was right.
-test("a second ticker cannot open on a story that already holds a slot", () => {
-  const openPositions = [{ ticker: "GOOGL", storyId: 42, shadow: 0 }];
-  const blockedForSameStory = (ticker, storyId) =>
-    openPositions.some((p) => p.ticker === ticker) ||
-    openPositions.some((p) => p.storyId !== null && p.storyId === storyId);
+//
+// This used to assert against a copy of the rule written inside the test, which
+// meant it passed whether or not the engine still enforced it. It now calls the
+// real guard.
+test("a second ticker cannot open on a story that already holds a slot", async () => {
+  const { evaluateEntryGuards } = await import("../worker/decisions.ts");
 
-  assert.equal(blockedForSameStory("AMZN", 42), true, "same story must be blocked");
-  assert.equal(blockedForSameStory("MSFT", 42), true, "same story must be blocked");
-  assert.equal(blockedForSameStory("AMZN", 77), false, "a genuinely different story stays eligible");
-  assert.equal(blockedForSameStory("GOOGL", 77), true, "same ticker stays blocked regardless of story");
+  const candidate = (ticker, storyId) => evaluateEntryGuards({
+    ticker, storyId, priceAtScan: 100, now: new Date("2026-08-20T15:00:00Z"),
+    account: { startingCapital: 10_000, realizedPnl: 0, maxOpenPositions: 5, riskPerTradePct: 0.25, dailyLossShutdown: 0 },
+    criticalDown: [], withinEntryWindow: true, isShadow: false,
+    openPositions: [{ ticker: "GOOGL", storyId: 42 }],
+    todaysPositions: [], lastClosedExitAt: null, sessionAtrPct: null,
+  });
+
+  assert.equal(candidate("AMZN", 42).allowed, false, "same story must be blocked");
+  assert.match(candidate("AMZN", 42).reason, /GOOGL already holds the slot/);
+  assert.equal(candidate("MSFT", 42).allowed, false, "same story must be blocked");
+  assert.equal(candidate("AMZN", 77).allowed, true, "a genuinely different story stays eligible");
+  assert.equal(candidate("GOOGL", 77).allowed, false, "same ticker stays blocked regardless of story");
 });
 
 // Naive reinforcement learning, per Barber & Odean (2011): investors are more
