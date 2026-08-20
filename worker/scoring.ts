@@ -1,4 +1,4 @@
-import type { FinnhubQuote } from "./finnhub";
+import type { FinnhubQuote } from "./finnhub.ts";
 import { washSaleBlockedUntil } from "./wash-sale.ts";
 
 // Deterministic, rules-based scoring only. Every signal here comes from a real,

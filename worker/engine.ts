@@ -1,19 +1,19 @@
 import { and, desc, eq, gte } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
-import * as schema from "../db/schema";
-import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub";
-import { getMarketClock, isForceCloseTime, isMarketOpen, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours";
-import { DEFAULT_MAX_OPEN_POSITIONS } from "./positions";
+import * as schema from "../db/schema.ts";
+import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub.ts";
+import { getMarketClock, isForceCloseTime, isMarketOpen, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours.ts";
+import { DEFAULT_MAX_OPEN_POSITIONS } from "./positions.ts";
 import { applyRealizedPnl, decideExit, evaluateEntryGuards, preflightEntryGuards } from "./decisions.ts";
-import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring";
-import { getRecentSecFilings } from "./sec-edgar";
-import { assessManipulationRisk } from "./manipulation";
-import { confirmBullish } from "./technicals";
-import { reviewTrade, type ReviewBars } from "./trade-review";
-import { analyzeBands } from "./band-analysis";
-import { assessSufficiency, type ScanYield } from "./data-sufficiency";
-import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources";
-import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, isStorySubject, quoteSymbolForTicker } from "./universe";
+import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring.ts";
+import { getRecentSecFilings } from "./sec-edgar.ts";
+import { assessManipulationRisk } from "./manipulation.ts";
+import { confirmBullish } from "./technicals.ts";
+import { reviewTrade, type ReviewBars } from "./trade-review.ts";
+import { analyzeBands } from "./band-analysis.ts";
+import { assessSufficiency, type ScanYield } from "./data-sufficiency.ts";
+import { collectFreeSourceSnapshot, cryptoQuoteDisagreementPct, yahooNews, yahooQuotes } from "./free-sources.ts";
+import { TICKER_UNIVERSE, cryptoTickersForStory, isCryptoTicker, isStorySubject, quoteSymbolForTicker } from "./universe.ts";
 
 type Db = DrizzleD1Database<typeof schema>;
 

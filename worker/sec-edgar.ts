@@ -54,7 +54,7 @@ export function describeFiling(items: string): { label: string; tone: "POSITIVE"
 }
 
 type TickerMap = Record<string, { cik_str: number; ticker: string; title: string }>;
-type Submissions = {
+export type Submissions = {
   cik: string;
   filings?: { recent?: Record<string, unknown[]> };
 };
@@ -88,38 +88,52 @@ export async function getRecentSecFilings(userAgent: string, tickers: string[], 
     await wait(SEC_REQUEST_INTERVAL_MS);
     const paddedCik = String(cik).padStart(10, "0");
     const submission = await secJson<Submissions>(`https://data.sec.gov/submissions/CIK${paddedCik}.json`, userAgent);
-    const recent = submission.filings?.recent ?? {};
-    const forms = (recent.form ?? []) as string[];
-    const accessionNumbers = (recent.accessionNumber ?? []) as string[];
-    const filingDates = (recent.filingDate ?? []) as string[];
-    const acceptanceTimes = (recent.acceptanceDateTime ?? []) as string[];
-    const primaryDocuments = (recent.primaryDocument ?? []) as string[];
-    const descriptions = (recent.primaryDocDescription ?? []) as string[];
-    // EDGAR publishes the 8-K item codes in a parallel `items` array. This
-    // declaration was missing, so every call reaching a material form threw a
-    // ReferenceError and the whole SEC pathway silently returned nothing.
-    const itemCodes = (recent.items ?? []) as string[];
+    filings.push(...filingsFromSubmissions(submission, ticker, cik, since));
+  }
+  return filings;
+}
 
-    for (let index = 0; index < forms.length; index++) {
-      if (!MATERIAL_FORMS.has(forms[index])) continue;
-      const filedAt = acceptanceTimes[index] || `${filingDates[index]}T00:00:00.000Z`;
-      const filedDate = new Date(filedAt);
-      if (!Number.isFinite(filedDate.getTime()) || filedDate < since) continue;
-      const accessionNumber = accessionNumbers[index];
-      const accessionPath = accessionNumber.replaceAll("-", "");
-      const primaryDocument = primaryDocuments[index];
-      filings.push({
-        ticker,
-        accessionNumber,
-        form: forms[index],
-        items: itemCodes[index] ?? "",
-        eventLabel: describeFiling(itemCodes[index] ?? "").label,
-        eventTone: describeFiling(itemCodes[index] ?? "").tone,
-        filedAt: filedDate.toISOString(),
-        description: descriptions[index] || `SEC Form ${forms[index]}`,
-        url: `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionPath}/${primaryDocument}`,
-      });
-    }
+/**
+ * Walks EDGAR's parallel-array submission format into filings. Kept separate
+ * from the fetch above so it can be run against a saved payload: this is the
+ * only place the 8-K item codes are read, and they are the most reliable
+ * catalyst signal Atlas has.
+ */
+export function filingsFromSubmissions(submission: Submissions, ticker: string, cik: string | number, since: Date): SecFiling[] {
+  const filings: SecFiling[] = [];
+  const recent = submission.filings?.recent ?? {};
+  const forms = (recent.form ?? []) as string[];
+  const accessionNumbers = (recent.accessionNumber ?? []) as string[];
+  const filingDates = (recent.filingDate ?? []) as string[];
+  const acceptanceTimes = (recent.acceptanceDateTime ?? []) as string[];
+  const primaryDocuments = (recent.primaryDocument ?? []) as string[];
+  const descriptions = (recent.primaryDocDescription ?? []) as string[];
+  // EDGAR publishes the 8-K item codes in a parallel `items` array. This
+  // declaration was missing, so every call reaching a material form threw a
+  // ReferenceError and the whole SEC pathway silently returned nothing.
+  const itemCodes = (recent.items ?? []) as string[];
+
+  for (let index = 0; index < forms.length; index++) {
+    if (!MATERIAL_FORMS.has(forms[index])) continue;
+    const filedAt = acceptanceTimes[index] || `${filingDates[index]}T00:00:00.000Z`;
+    const filedDate = new Date(filedAt);
+    if (!Number.isFinite(filedDate.getTime()) || filedDate < since) continue;
+    const accessionNumber = accessionNumbers[index];
+    if (!accessionNumber) continue;
+    const accessionPath = accessionNumber.replaceAll("-", "");
+    const primaryDocument = primaryDocuments[index];
+    const described = describeFiling(itemCodes[index] ?? "");
+    filings.push({
+      ticker,
+      accessionNumber,
+      form: forms[index],
+      items: itemCodes[index] ?? "",
+      eventLabel: described.label,
+      eventTone: described.tone,
+      filedAt: filedDate.toISOString(),
+      description: descriptions[index] || `SEC Form ${forms[index]}`,
+      url: `https://www.sec.gov/Archives/edgar/data/${cik}/${accessionPath}/${primaryDocument}`,
+    });
   }
   return filings;
 }

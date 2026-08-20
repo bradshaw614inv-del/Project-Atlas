@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
-import { getDb } from "../../../db";
-import { runScan } from "../../../worker/engine";
+import { getDb } from "../../../db/index.ts";
+import { runScan } from "../../../worker/engine.ts";
 
 // Manual trigger for local testing only. In production the Cron Trigger in
 // wrangler.jsonc calls the same runScan() every 5 minutes via worker/index.ts.

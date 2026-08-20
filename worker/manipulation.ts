@@ -92,6 +92,12 @@ export function assessManipulationRisk(input: ManipulationInput): ManipulationVe
 // Nasdaq publishes reason codes in its halt feed; Atlas previously read only
 // the symbol and discarded why. The reason is the part that distinguishes a
 // routine news pause from the exchange stepping in on disorderly trading.
+function nextDay(isoDate: string): string {
+  const next = new Date(`${isoDate}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  return next.toISOString().slice(0, 10);
+}
+
 export function parseHaltRecords(xml: string): HaltRecord[] {
   const records: HaltRecord[] = [];
   for (const block of xml.split(/<item[\s>]/i).slice(1)) {
@@ -104,11 +110,19 @@ export function parseHaltRecords(xml: string): HaltRecord[] {
     const haltDate = field("HaltDate") || new Date().toISOString().slice(0, 10);
     const haltTime = field("HaltTime") || "00:00:00";
     const resumed = field("ResumptionTradeTime");
+    const haltedAt = `${haltDate}T${haltTime.slice(0, 8)}Z`;
+    // The feed publishes a resumption time without a date, so it has to borrow
+    // the halt's. A resumption clock-time earlier than the halt's means the
+    // session rolled past midnight; dating it from the halt day would place the
+    // resumption before the halt and make the pause look negative-length.
+    const resumedAt = resumed
+      ? `${resumed.slice(0, 8) < haltTime.slice(0, 8) ? nextDay(haltDate) : haltDate}T${resumed.slice(0, 8)}Z`
+      : null;
     records.push({
       symbol,
       reasonCode: field("ReasonCode") || "UNKNOWN",
-      haltedAt: `${haltDate}T${haltTime.slice(0, 8)}Z`,
-      resumedAt: resumed ? `${haltDate}T${resumed.slice(0, 8)}Z` : null,
+      haltedAt,
+      resumedAt,
     });
   }
   return records;

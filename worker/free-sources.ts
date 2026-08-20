@@ -1,6 +1,6 @@
-import { ROBINHOOD_CRYPTO_UNIVERSE, TICKER_UNIVERSE } from "./universe";
-import { parseHaltRecords, type HaltRecord } from "./manipulation";
-import { readTechnicals, type Bar, type TechnicalRead } from "./technicals";
+import { ROBINHOOD_CRYPTO_UNIVERSE, TICKER_UNIVERSE } from "./universe.ts";
+import { parseHaltRecords, type HaltRecord } from "./manipulation.ts";
+import { readTechnicals, type Bar, type TechnicalRead } from "./technicals.ts";
 
 // Real observed values from Yahoo's public chart API: last price, previous
 // close, and a session VWAP computed from its real 5-minute OHLCV bars.
@@ -40,7 +40,7 @@ const text = async (url: string, init?: RequestInit) => {
 };
 const json = async <T>(url: string, init?: RequestInit) => JSON.parse(await text(url, init)) as T;
 
-function xmlValues(xml: string, tag: string) {
+export function xmlValues(xml: string, tag: string) {
   return Array.from(xml.matchAll(new RegExp(`<${tag}[^>]*>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?<\\/${tag}>`, "gi")))
     .map((match) => match[1].replace(/<[^>]+>/g, "").trim());
 }
@@ -55,7 +55,12 @@ async function nasdaqHalts() {
 }
 
 async function federalReserveRisk(now: Date) {
-  const xml = await text("https://www.federalreserve.gov/feeds/press_all.xml");
+  return macroRiskTitles(await text("https://www.federalreserve.gov/feeds/press_all.xml"), now);
+}
+
+// A Fed release counts as macro risk only when it is both recent and about
+// policy. Anything older than two hours has already been priced.
+export function macroRiskTitles(xml: string, now: Date): string[] {
   const titles = xmlValues(xml, "title");
   const dates = xmlValues(xml, "updated");
   return titles.filter((title, index) => {
@@ -94,6 +99,24 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=5m&range=5d`,
     { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } },
   );
+  return snapshotFromChart(data, symbol);
+}
+
+// The whole transform from Yahoo's chart payload to a snapshot: session
+// grouping, VWAP, relative volume, ATR and the chart read. Kept separate from
+// the fetch above so it can be run against saved payloads — every loop in here
+// skips malformed rows rather than throwing, so a Yahoo field rename produces
+// a clean, empty, entirely wrong answer.
+// Yahoo publishes `null` for bars it has no data for. `Number(null)` is 0 and
+// 0 passes Number.isFinite, so mapping raw fields through Number() silently
+// turned a gap bar into a bar priced at zero — dragging VWAP down towards it
+// and, through SPY's VWAP, the market-weather verdict with it.
+function barValue(value: number | null | undefined): number | null {
+  if (value === null || value === undefined) return null;
+  return Number.isFinite(value) ? Number(value) : null;
+}
+
+export function snapshotFromChart(data: YahooChart, symbol: string): IndexSnapshot {
   const result = data.chart?.result?.[0];
   const price = Number(result?.meta?.regularMarketPrice);
   const prevClose = Number(result?.meta?.chartPreviousClose);
@@ -110,27 +133,27 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
   let latestDay = "";
 
   for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
-    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(Number);
+    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(barValue);
     const stamp = stamps[i];
-    if (![high, low, close, volume].every(Number.isFinite) || volume <= 0 || !Number.isFinite(stamp)) continue;
+    if ([high, low, close, volume].some((value) => value === null) || volume! <= 0 || !Number.isFinite(stamp)) continue;
     const at = new Date(stamp * 1000);
     const day = dayFormat.format(at);
     const [hh, mm] = timeFormat.format(at).split(":").map(Number);
     const seconds = hh * 3600 + mm * 60;
     if (day > latestDay) latestDay = day;
     const list = sessions.get(day) ?? [];
-    list.push({ seconds, volume });
+    list.push({ seconds, volume: volume! });
     sessions.set(day, list);
   }
 
   // VWAP uses today's session only.
   for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
-    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(Number);
+    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(barValue);
     const stamp = stamps[i];
-    if (![high, low, close, volume].every(Number.isFinite) || volume <= 0 || !Number.isFinite(stamp)) continue;
+    if ([high, low, close, volume].some((value) => value === null) || volume! <= 0 || !Number.isFinite(stamp)) continue;
     if (dayFormat.format(new Date(stamp * 1000)) !== latestDay) continue;
-    valueVolume += ((high + low + close) / 3) * volume;
-    totalVolume += volume;
+    valueVolume += ((high! + low! + close!) / 3) * volume!;
+    totalVolume += volume!;
   }
 
   const today = sessions.get(latestDay) ?? [];
@@ -149,13 +172,13 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
   const ranges: number[] = [];
   let previousClose: number | null = null;
   for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
-    const [high, low, close] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i]].map(Number);
-    if (![high, low, close].every(Number.isFinite)) continue;
+    const [high, low, close] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i]].map(barValue);
+    if ([high, low, close].some((value) => value === null)) continue;
     const trueRange = previousClose === null
-      ? high - low
-      : Math.max(high - low, Math.abs(high - previousClose), Math.abs(low - previousClose));
-    if (Number.isFinite(trueRange) && close > 0) ranges.push((trueRange / close) * 100);
-    previousClose = close;
+      ? high! - low!
+      : Math.max(high! - low!, Math.abs(high! - previousClose), Math.abs(low! - previousClose));
+    if (Number.isFinite(trueRange) && close! > 0) ranges.push((trueRange / close!) * 100);
+    previousClose = close!;
   }
   const atrPct = ranges.length >= 20
     ? ranges.reduce((sum, value) => sum + value, 0) / ranges.length
@@ -165,11 +188,11 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
   // five-day blur.
   const todayBars: Bar[] = [];
   for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
-    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(Number);
+    const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(barValue);
     const stamp = stamps[i];
-    if (![high, low, close].every(Number.isFinite) || !Number.isFinite(stamp)) continue;
+    if ([high, low, close].some((value) => value === null) || !Number.isFinite(stamp)) continue;
     if (dayFormat.format(new Date(stamp * 1000)) !== latestDay) continue;
-    todayBars.push({ high, low, close, volume: Number.isFinite(volume) ? volume : 0 });
+    todayBars.push({ high: high!, low: low!, close: close!, volume: volume ?? 0 });
   }
   const sessionVwap = totalVolume > 0 ? valueVolume / totalVolume : null;
 
@@ -221,7 +244,12 @@ export async function yahooNews(ticker: string): Promise<WireStory[]> {
     `https://feeds.finance.yahoo.com/rss/2.0/headline?s=${encodeURIComponent(ticker)}&region=US&lang=en-US`,
     { headers: { "User-Agent": "Mozilla/5.0 (compatible; AtlasPaperSim/1.0)" } },
   );
+  return parseYahooNewsRss(xml);
+}
 
+// Every field must be real: an item missing an id, title, link or a parseable
+// timestamp is dropped rather than backfilled with a guess.
+export function parseYahooNewsRss(xml: string): WireStory[] {
   const stories: WireStory[] = [];
   for (const block of xml.split(/<item>/i).slice(1)) {
     const field = (tag: string) => {
@@ -233,8 +261,6 @@ export async function yahooNews(ticker: string): Promise<WireStory[]> {
     const published = field("pubDate");
     const guid = field("guid") || url;
     const publishedAt = new Date(published);
-    // Every field must be real; anything missing an id, title, link or a
-    // parseable timestamp is dropped rather than backfilled with a guess.
     if (!headline || !url || !guid || Number.isNaN(publishedAt.getTime())) continue;
     stories.push({
       id: `yahoo:${guid}`,
@@ -271,7 +297,7 @@ export async function yahooBackupQuotes(symbols: string[]): Promise<Map<string, 
 // Press releases corroborate news-feed stories; alone they never create candidates.
 const EXCHANGE_TAG = /\((?:NYSE|NASDAQ|Nasdaq|NYSE American|NYSEAMERICAN|CBOE|OTCQX|OTCQB)\s*:\s*([A-Z]{1,5})\)/g;
 
-function pressReleasesFromRss(xml: string, sourceName: string): PressRelease[] {
+export function pressReleasesFromRss(xml: string, sourceName: string): PressRelease[] {
   const items = xml.split(/<item[\s>]/i).slice(1);
   const releases: PressRelease[] = [];
   for (const item of items) {

@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
-import { getDb } from "../../../db";
-import { analyzeBands } from "../../../worker/band-analysis";
-import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns, scanYield, tradeReviews } from "../../../db/schema";
+import { getDb } from "../../../db/index.ts";
+import { analyzeBands } from "../../../worker/band-analysis.ts";
+import { candidates, connectionEvents, connectionStatus, experiments, knowledgeEdges, knowledgeNodes, learningJournal, marketWeatherLog, newsStories, positionEvents, positions, scanRuns, scanYield, tradeReviews } from "../../../db/schema.ts";
 
 const PAPER_TRADE_TARGET = 100;
 const HOLDOUT_TRADE_TARGET = 30;

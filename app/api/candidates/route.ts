@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
-import { getDb } from "../../../db";
-import { candidates, newsStories } from "../../../db/schema";
+import { getDb } from "../../../db/index.ts";
+import { candidates, newsStories } from "../../../db/schema.ts";
 
 export async function GET() {
   const db = getDb();

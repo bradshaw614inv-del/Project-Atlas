@@ -1,4 +1,4 @@
-import { isCryptoTicker } from "../../../worker/universe";
+import { isCryptoTicker } from "../../../worker/universe.ts";
 
 const TICKER_PATTERN = /^[A-Z.\-]{1,10}$/;
 

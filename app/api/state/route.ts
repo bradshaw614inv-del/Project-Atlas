@@ -1,7 +1,7 @@
 import { desc, eq } from "drizzle-orm";
-import { getDb } from "../../../db";
-import { accountState, accountTransactions, marketWeatherLog, scanRuns } from "../../../db/schema";
-import { DEFAULT_MAX_OPEN_POSITIONS } from "../../../worker/positions";
+import { getDb } from "../../../db/index.ts";
+import { accountState, accountTransactions, marketWeatherLog, scanRuns } from "../../../db/schema.ts";
+import { DEFAULT_MAX_OPEN_POSITIONS } from "../../../worker/positions.ts";
 
 export async function GET() {
   const db = getDb();
