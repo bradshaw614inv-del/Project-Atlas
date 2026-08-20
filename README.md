@@ -91,8 +91,30 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 
 - `npm run dev`: start local development
 - `npm run build`: verify the vinext build output
-- `npm test`: build the starter and verify its rendered loading skeleton
+- `npm run test:unit`: run the test suite (no build required, runs in under a second)
+- `npm run test:coverage`: run the suite and enforce the coverage floor
+- `npm test`: unit tests followed by the build check
+- `npm run typecheck`: `tsc --noEmit` across the project
+- `npm run lint`: ESLint
+- `npm run cf-typegen`: regenerate `worker-configuration.d.ts` after editing `wrangler.jsonc`
 - `npm run db:generate`: generate Drizzle migrations after schema changes
+
+## Testing
+
+`npm run test:unit` needs no build and no Cloudflare runtime: the suite runs
+against the plain TypeScript modules through node's type stripping, which is why
+it finishes in well under a second. Keep it that way — a fast suite is one people
+run.
+
+`npm run test:coverage` measures differently from `node --test
+--experimental-test-coverage` on its own. The built-in summary only reports files
+a test actually loaded, so a module nobody imports does not show as 0% — it does
+not show at all, and the headline percentage is computed as though it were not
+there. `scripts/coverage-gate.mjs` walks the source tree instead and scores
+anything unmeasured as zero, so the number falls when untested code is added.
+A short list inside that script names the files node genuinely cannot load
+(JSX, and anything importing `cloudflare:workers` or `next/headers`) along with
+the reason for each.
 
 ## Learn More
 

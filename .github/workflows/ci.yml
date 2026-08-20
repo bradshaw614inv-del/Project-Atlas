@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      # The unit tests need no build and run in well under a second, so they go
+      # first: a broken guard should fail the run before anything slower starts.
+      - name: Unit tests
+        run: npm run test:unit
+
+      # Counts files no test imports as zero, which the built-in coverage
+      # summary does not — see scripts/coverage-gate.mjs.
+      - name: Coverage
+        run: npm run test:coverage
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run test:build

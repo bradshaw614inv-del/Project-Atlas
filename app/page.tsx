@@ -327,7 +327,7 @@ export default function Home() {
         </form>
         <div><span>PORTFOLIO VALUE</span><strong className={(portfolioValue ?? 0) >= (account?.startingCapital ?? 0) ? "positive" : "negative"}>{portfolioValue === null ? "—" : money(portfolioValue)}</strong><small>Contributed cash + closed P&amp;L + live open-position P&amp;L</small></div>
         <div><span>REALIZED P&L</span><strong className={(account?.realizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.realizedPnl >= 0 ? "+" : ""}${money(account.realizedPnl)}` : "—"}</strong><small>All-time, simulated</small></div>
-        <div><span>TODAY'S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
+        <div><span>TODAY&apos;S P&L</span><strong className={(account?.dailyRealizedPnl ?? 0) >= 0 ? "positive" : "negative"}>{account ? `${account.dailyRealizedPnl >= 0 ? "+" : ""}${money(account.dailyRealizedPnl)}` : "—"}</strong><small>{account?.dailyLossShutdown ? "Circuit breaker tripped — no new entries today" : "Circuit breaker armed"}</small></div>
         <div>
           <span>INVESTED</span>
           <strong>{money(investedCost)}</strong>
@@ -423,7 +423,7 @@ export default function Home() {
       <section className="watchlist-panel">
         <div className="watchlist-head"><div><span>LIVE SCORING FEED · HIGHEST SCORE FIRST</span><h2>Recent candidates</h2><p>{candidates.length > 0 ? `Atlas evaluated ${candidates.length} stories this session. ${activeCandidates.length === 0 ? "None cleared the bar yet — that's normal, it only acts when something clearly qualifies." : `${activeCandidates.length} worth watching right now.`}` : "Every story Atlas evaluates shows up here, accepted and rejected, with the exact reason."}</p></div></div>
 
-        {activeCandidates.length === 0 ? <p className="watchlist-empty">Nothing is currently worth watching. Atlas doesn't force trades — no qualifying story means no trade.</p> : <div className="candidate-list">{activeCandidates.map((c) => (
+        {activeCandidates.length === 0 ? <p className="watchlist-empty">Nothing is currently worth watching. Atlas doesn&apos;t force trades — no qualifying story means no trade.</p> : <div className="candidate-list">{activeCandidates.map((c) => (
           <CandidateRow key={c.id} c={c} />
         ))}</div>}
 
@@ -481,7 +481,7 @@ export default function Home() {
           <SafetyRule value="Flat by 3:45" label="No overnight risk" detail="Every open position force-closes before the close — Robinhood stops don't execute after hours." />
           <SafetyRule value="20 / 50 bps" label="Simulated round-trip costs" detail="Stocks / crypto use conservative, predeclared spread-and-slippage assumptions. These are simulated execution costs, never presented as observed quotes." />
         </div>
-        <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>real, dated news only</span><span>two consecutive qualifying scans</span><span>market not "Sit out"</span><span>price confirmed, not extended</span><span>wash-sale blacklist clear</span><span>no negative-sentiment keywords</span><span>no duplicate open position</span><span>no forced trade quota</span></div>
+        <div className="hard-gates"><strong>Every candidate must also pass:</strong><span>real, dated news only</span><span>two consecutive qualifying scans</span><span>market not &quot;Sit out&quot;</span><span>price confirmed, not extended</span><span>wash-sale blacklist clear</span><span>no negative-sentiment keywords</span><span>no duplicate open position</span><span>no forced trade quota</span></div>
       </section>
 
       <footer><span>ATLAS AUTOMATED SIMULATOR</span><span>Fully simulated — never places a real order on Robinhood or any brokerage.</span></footer>
