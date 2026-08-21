@@ -591,3 +591,76 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
 .closed-summary span.positive { color: var(--success); }
 .closed-summary span.negative { color: var(--danger); }
 .closed-summary span.more { color: var(--faint); font-weight: 400; }
+
+/* Daily record — every session, traded or not, with the funnel behind it. */
+.daily-panel { display: grid; gap: 16px; }
+.daily-head { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: flex-start; }
+.daily-head > div:first-child { flex: 1 1 22rem; }
+.daily-head span { font: 800 9px var(--font-geist-mono, monospace); color: var(--accent); letter-spacing: .12em; }
+.daily-head h2 { margin: 4px 0 6px; }
+.daily-head p { color: var(--subtle); max-width: 60ch; margin: 0; }
+
+.daily-summary { display: flex; gap: 8px; flex-wrap: wrap; }
+.daily-summary article {
+  background: var(--surface-2); border: 1px solid var(--accent-soft); border-radius: 4px;
+  padding: 10px 14px; display: grid; gap: 2px; min-width: 6.5rem;
+}
+.daily-summary strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.daily-summary span { font: 700 9px var(--font-geist-mono, monospace); color: var(--faint); letter-spacing: .08em; text-transform: uppercase; }
+.daily-summary article.alert strong { color: var(--warning); }
+
+.daily-empty { color: var(--subtle); }
+.daily-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+
+.daily-row { background: var(--card); border: 1px solid var(--accent-soft); border-left: 3px solid var(--faint); border-radius: 4px; }
+.daily-row.verdict-traded { border-left-color: var(--success); }
+.daily-row.verdict-pipeline-starved { border-left-color: var(--danger); }
+.daily-row.verdict-no-qualifying-setup { border-left-color: var(--subtle); }
+.daily-row.verdict-blocked-by-risk { border-left-color: var(--warning); }
+.daily-row.verdict-not-a-trading-day { border-left-color: var(--surface-2); opacity: .65; }
+
+.daily-row-head {
+  width: 100%; background: none; border: 0; color: inherit; cursor: pointer; text-align: left;
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 11px 14px; font: inherit;
+}
+.daily-row-head:hover { background: var(--surface-2); }
+.daily-row-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.daily-row-head time { font: 700 12px var(--font-geist-mono, monospace); color: var(--accent-text); font-variant-numeric: tabular-nums; }
+.daily-row-head b { flex: 1 1 16rem; font-weight: 600; }
+.daily-row-head i { font-style: normal; color: var(--faint); margin-left: auto; }
+.daily-counts { font: 400 11px var(--font-geist-mono, monospace); color: var(--faint); white-space: nowrap; }
+.daily-note-count { font: 700 9px var(--font-geist-mono, monospace); color: var(--accent); font-style: normal; letter-spacing: .06em; }
+.daily-row.actionable .daily-row-head b::after { content: " · needs attention"; color: var(--warning); font-weight: 700; font-size: 11px; }
+
+.daily-detail { border-top: 1px solid var(--accent-soft); padding: 14px; display: grid; gap: 14px; }
+.daily-analysis { margin: 0; color: var(--subtle); max-width: 76ch; }
+
+.daily-blockers { display: grid; gap: 3px; }
+.daily-blockers b, .daily-notes b { font: 800 9px var(--font-geist-mono, monospace); color: var(--accent); letter-spacing: .1em; text-transform: uppercase; }
+.blocker { display: flex; justify-content: space-between; gap: 12px; padding: 5px 9px; background: var(--surface-2); border-radius: 3px; border-left: 2px solid var(--faint); }
+.blocker em { font-style: normal; font-variant-numeric: tabular-nums; color: var(--accent-text); }
+.blocker.kind-data { border-left-color: var(--danger); }
+.blocker.kind-risk { border-left-color: var(--warning); }
+.blocker.kind-market { border-left-color: var(--subtle); }
+
+.daily-notes { display: grid; gap: 8px; }
+.daily-notes small { color: var(--faint); }
+.daily-note { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: start; background: var(--surface-2); padding: 8px 10px; border-radius: 3px; }
+.daily-note p { margin: 0; white-space: pre-wrap; }
+.daily-note.resolved { opacity: .55; }
+.daily-note.resolved p { text-decoration: line-through; }
+.note-kind { font: 800 8px var(--font-geist-mono, monospace); letter-spacing: .1em; padding: 3px 6px; border-radius: 2px; background: var(--card); color: var(--subtle); }
+.note-kind.kind-change_request { color: var(--warning); }
+
+.daily-note-form { display: grid; gap: 6px; grid-template-columns: 1fr auto; align-items: start; }
+.daily-note-form select { grid-column: 1 / -1; justify-self: start; }
+.daily-note-form textarea { width: 100%; resize: vertical; font: inherit; }
+.daily-note-form select, .daily-note-form textarea, .daily-note-form button, .daily-note button {
+  background: var(--surface-2); color: var(--ink); border: 1px solid var(--accent-soft); border-radius: 3px; padding: 6px 10px; font: inherit;
+}
+.daily-note-form button, .daily-note button { cursor: pointer; }
+.daily-note-form button:disabled { opacity: .5; cursor: not-allowed; }
+.daily-note-form button:hover:not(:disabled), .daily-note button:hover { border-color: var(--accent); }
+.daily-error { color: var(--danger); }
+.daily-hint { grid-column: 1 / -1; }
+.daily-hint code { background: var(--surface-2); padding: 1px 4px; border-radius: 2px; }

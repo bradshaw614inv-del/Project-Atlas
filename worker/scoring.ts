@@ -151,13 +151,24 @@ export const TRADE_THRESHOLD = 60;
 // needed to reach 60. This is a confirmation gate, not a trade threshold.
 export const CONFIRMATION_ELIGIBILITY_THRESHOLD = 40;
 export type SignalScore = { key: string; label: string; score: number; max: number; evidence: string };
+
+// A machine-readable statement of what stopped a candidate. The `reason` string
+// next to it is written for a human reading the dashboard; this is what the
+// daily funnel counts aggregate on, so it must never be derived by pattern
+// matching the prose.
+export type ScoreBlocker =
+  | "WASH_SALE" | "NEGATIVE_NEWS" | "TOO_EXTENDED" | "PRICE_TOO_LOW" | "STALE"
+  | "HEADLINE_ONLY" | "NO_CATALYST" | "NOT_PERSISTED" | "PRICE_UNCONFIRMED"
+  | "SCORE_TOO_LOW";
 export type ScoreResult = {
   score: number; status: "WATCH" | "CAUTION" | "DISQUALIFIED"; reason: string;
   signals: SignalScore[]; analystScore: number; skepticPenalty: number;
+  /** Null when the candidate qualified; otherwise what stopped it. */
+  blocker: ScoreBlocker | null;
 };
 
-function disqualified(reason: string, signals: SignalScore[] = []): ScoreResult {
-  return { score: 0, status: "DISQUALIFIED", reason, signals, analystScore: 0, skepticPenalty: 100 };
+function disqualified(reason: string, blocker: ScoreBlocker, signals: SignalScore[] = []): ScoreResult {
+  return { score: 0, status: "DISQUALIFIED", reason, signals, analystScore: 0, skepticPenalty: 100, blocker };
 }
 
 export function scoreCandidate(input: {
@@ -174,25 +185,35 @@ export function scoreCandidate(input: {
   independentSourceCount?: number;
   relativeVolume?: number | null;
   hasArticleBody?: boolean;
+  /**
+   * How far the security has already moved today, measured against the previous
+   * close. Distinct from priceChangePct, which measures drift since Atlas first
+   * observed the story: that is confirmation, this is extension. The "no
+   * chasing" guard needs extension — a stock already up 12% on the day reads as
+   * unmoved on priceChangePct if Atlas happened to first see it at the top.
+   * Falls back to priceChangePct when the daily move is unavailable.
+   */
+  extensionPct?: number | null;
 }): ScoreResult {
   const blockedUntil = input.ticker && input.now ? washSaleBlockedUntil(input.ticker, input.now) : null;
   if (blockedUntil) {
-    return disqualified(`Wash-sale guard: ${input.ticker} cannot re-enter before ${blockedUntil}. Observation retained; no trade allowed.`);
+    return disqualified(`Wash-sale guard: ${input.ticker} cannot re-enter before ${blockedUntil}. Observation retained; no trade allowed.`, "WASH_SALE");
   }
   const catalyst = classifyCatalyst(input.headline, input.summary);
   const LIQUIDITY_NOTE = "Spread and volume can't be verified on the free data tier.";
 
   if (catalyst.negative) {
-    return disqualified(`Negative/conflicting keyword matched ("${catalyst.matchedKeyword}") — never buy on unverified bad news.`);
+    return disqualified(`Negative/conflicting keyword matched ("${catalyst.matchedKeyword}") — never buy on unverified bad news.`, "NEGATIVE_NEWS");
   }
-  if (input.priceChangePct !== null && input.priceChangePct >= 8) {
-    return disqualified(`Already up ${input.priceChangePct.toFixed(1)}% since the story broke — too extended, no chasing.`);
+  const extensionPct = input.extensionPct ?? input.priceChangePct;
+  if (extensionPct !== null && extensionPct >= 8) {
+    return disqualified(`Already up ${extensionPct.toFixed(1)}% on the day — too extended, no chasing.`, "TOO_EXTENDED");
   }
   if (input.priceAtScan !== null && input.priceAtScan < 5) {
-    return disqualified("Price is below $5 — excluded as a low-liquidity candidate in this free-tier experiment.");
+    return disqualified("Price is below $5 — excluded as a low-liquidity candidate in this free-tier experiment.", "PRICE_TOO_LOW");
   }
   if (input.minutesSincePublished > 360) {
-    return disqualified("Story is more than 6 hours old with no fresh confirmation.");
+    return disqualified("Story is more than 6 hours old with no fresh confirmation.", "STALE");
   }
 
   const moveScore = moveConfirmationScore(input.priceChangePct);
@@ -227,7 +248,7 @@ export function scoreCandidate(input: {
     { key: "source_verification", label: "Source verification", score: 0, max: 0, evidence: !traceable ? "Missing source name or traceable URL" : independentSourceCount >= 2 ? `${independentSourceCount} independent outlets corroborate this ticker's fresh catalyst set` : `One traceable outlet (${input.source}) — awaiting independent corroboration` },
   ];
   const analystScore = signals.filter((signal) => signal.score > 0).reduce((sum, signal) => sum + signal.score, 0);
-  const skepticPenalty = (input.priceChangePct === null ? 5 : input.priceChangePct > 6 ? 8 : 0) + provenancePenalty + attentionPenalty;
+  const skepticPenalty = (input.priceChangePct === null ? 5 : (extensionPct ?? 0) > 6 ? 8 : 0) + provenancePenalty + attentionPenalty;
   const score = Math.max(0, analystScore - skepticPenalty);
 
   // Headlines alone are not enough to act on, ever. A headline can state the
@@ -240,7 +261,7 @@ export function scoreCandidate(input: {
     return {
       score: Math.min(score, TRADE_THRESHOLD - 1), status: "CAUTION",
       reason: `Headline only — no article text available to verify what the story actually says. Atlas will not act on a headline alone. ${LIQUIDITY_NOTE}`,
-      signals, analystScore, skepticPenalty,
+      signals, analystScore, skepticPenalty, blocker: "HEADLINE_ONLY",
     };
   }
 
@@ -253,23 +274,23 @@ export function scoreCandidate(input: {
     return {
       score: Math.min(score, TRADE_THRESHOLD - 1), status: "CAUTION",
       reason: `No identifiable catalyst in this story — price moved but nothing explains why, so Atlas records it without acting. ${LIQUIDITY_NOTE}`,
-      signals, analystScore, skepticPenalty,
+      signals, analystScore, skepticPenalty, blocker: "NO_CATALYST",
     };
   }
 
   if (score >= TRADE_THRESHOLD && input.seenConfirmationEligibleLastScan && moveScore > 0) {
-    return { score, status: "WATCH", reason: `${catalyst.label}, price confirmed, seen on a second consecutive scan. ${LIQUIDITY_NOTE}`, signals, analystScore, skepticPenalty };
+    return { score, status: "WATCH", reason: `${catalyst.label}, price confirmed, seen on a second consecutive scan. ${LIQUIDITY_NOTE}`, signals, analystScore, skepticPenalty, blocker: null };
   }
   if (score >= TRADE_THRESHOLD && !input.seenConfirmationEligibleLastScan) {
-    return { score, status: "CAUTION", reason: `${catalyst.label} scores high but only appeared once — needs to reappear on the next 5-minute scan before Atlas will act (no first-tick chasing).`, signals, analystScore, skepticPenalty };
+    return { score, status: "CAUTION", reason: `${catalyst.label} scores high but only appeared once — needs to reappear on the next 5-minute scan before Atlas will act (no first-tick chasing).`, signals, analystScore, skepticPenalty, blocker: "NOT_PERSISTED" };
   }
   if (score >= TRADE_THRESHOLD && moveScore === 0) {
-    return { score, status: "CAUTION", reason: `${catalyst.label} persisted and reached ${score.toFixed(0)}/100, but the real quote has not confirmed a positive move. Atlas will keep observing rather than trade.`, signals, analystScore, skepticPenalty };
+    return { score, status: "CAUTION", reason: `${catalyst.label} persisted and reached ${score.toFixed(0)}/100, but the real quote has not confirmed a positive move. Atlas will keep observing rather than trade.`, signals, analystScore, skepticPenalty, blocker: "PRICE_UNCONFIRMED" };
   }
   if (score >= 35) {
-    return { score, status: "CAUTION", reason: `${catalyst.label}, but below the action threshold (${score.toFixed(0)}/100, needs ${TRADE_THRESHOLD}). Tracking.`, signals, analystScore, skepticPenalty };
+    return { score, status: "CAUTION", reason: `${catalyst.label}, but below the action threshold (${score.toFixed(0)}/100, needs ${TRADE_THRESHOLD}). Tracking.`, signals, analystScore, skepticPenalty, blocker: "SCORE_TOO_LOW" };
   }
-  return { score, status: "DISQUALIFIED", reason: `Score too low (${score.toFixed(0)}/100) — no clear, fresh, price-confirmed catalyst.`, signals, analystScore, skepticPenalty };
+  return { score, status: "DISQUALIFIED", reason: `Score too low (${score.toFixed(0)}/100) — no clear, fresh, price-confirmed catalyst.`, signals, analystScore, skepticPenalty, blocker: "SCORE_TOO_LOW" };
 }
 
 export type WeatherResult = { classification: "TRADE_ELIGIBLE" | "CAUTION" | "SIT_OUT"; flags: string[]; negativeFlags: number; completenessPct: number };

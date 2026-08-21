@@ -161,3 +161,59 @@ test("an unknown quote is penalised rather than assumed favourable", () => {
   assert.notEqual(unknown.status, "WATCH", "and it can never reach the trade gate");
   assert.ok(unknown.score < TRADE_THRESHOLD || unknown.status !== "WATCH");
 });
+
+test("extension is measured on the day, not since Atlas first looked", () => {
+  // These are two different quantities that were conflated. priceChangePct is
+  // drift since Atlas first saw the story — that is confirmation. Extension is
+  // how far the move has already gone, and it is what "no chasing" needs.
+  //
+  // The failing case: a stock already up 12% on the day that Atlas first
+  // noticed at the top reads as 0% drift, so the guard meant to stop it chasing
+  // never fired.
+  const chasing = scoreCandidate({ ...strong, priceChangePct: 0.3, extensionPct: 12 });
+  assert.equal(chasing.status, "DISQUALIFIED");
+  assert.equal(chasing.blocker, "TOO_EXTENDED");
+  assert.match(chasing.reason, /Already up 12\.0% on the day/);
+
+  // And the mirror image: a stock flat on the day that has drifted up 9% since
+  // Atlas first saw it is not extended, whatever the drift says.
+  const notExtended = scoreCandidate({ ...strong, priceChangePct: 9, extensionPct: 0.5 });
+  assert.notEqual(notExtended.status, "DISQUALIFIED");
+  assert.equal(notExtended.blocker !== "TOO_EXTENDED", true);
+
+  // Without a daily move, it falls back to the drift rather than waving
+  // everything through.
+  assert.equal(scoreCandidate({ ...strong, priceChangePct: 9 }).blocker, "TOO_EXTENDED");
+  assert.equal(scoreCandidate({ ...strong, priceChangePct: 9, extensionPct: null }).blocker, "TOO_EXTENDED");
+});
+
+test("every rejection carries a machine-readable blocker beside its prose", () => {
+  // The daily funnel counts aggregate on these. Deriving them by pattern
+  // matching the reason strings would break on the first copy edit.
+  const cases = [
+    ["WASH_SALE", { ticker: "GME", now: new Date("2026-08-20T14:00:00Z") }],
+    ["NEGATIVE_NEWS", { headline: "Company cuts guidance" }],
+    ["TOO_EXTENDED", { extensionPct: 12 }],
+    ["PRICE_TOO_LOW", { priceAtScan: 3 }],
+    ["STALE", { minutesSincePublished: 400 }],
+    ["HEADLINE_ONLY", { hasArticleBody: false }],
+    ["NO_CATALYST", { headline: "What is going on with shares today", summary: "" }],
+    // NOT_PERSISTED is a narrow branch: losing the 20 persistence points drops
+    // most candidates under the gate, where SCORE_TOO_LOW is the honest answer.
+    // It only fires for one strong enough to clear 60 without them.
+    ["NOT_PERSISTED", {
+      seenConfirmationEligibleLastScan: false,
+      source: "Reuters", sourceUrl: "https://example.com/s", independentSourceCount: 2,
+    }],
+    ["PRICE_UNCONFIRMED", { priceChangePct: 0 }],
+  ];
+
+  for (const [expected, override] of cases) {
+    assert.equal(scoreCandidate({ ...strong, ...override }).blocker, expected, `expected ${expected}`);
+  }
+
+  // A candidate that qualifies carries no blocker at all.
+  const qualifying = scoreCandidate({ ...strong, priceChangePct: 2 });
+  assert.equal(qualifying.status, "WATCH");
+  assert.equal(qualifying.blocker, null);
+});

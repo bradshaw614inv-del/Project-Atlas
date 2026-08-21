@@ -37,6 +37,20 @@ type Candidate = {
   scoreBand: string; nearMiss: number; analystScore: number; skepticPenalty: number;
   signals: { key: string; label: string; score: number; max: number; evidence: string }[];
 };
+type Blocker = { stage: string; count: number; label: string; kind: string };
+type DayNote = { id: number; tradingDay: string; createdAt: string; kind: string; body: string; resolved: boolean };
+type TradingDay = {
+  tradingDay: string; isTradingDay: boolean; scans: number;
+  storiesFetched: number; candidatesScored: number;
+  positionsOpened: number; positionsClosed: number; realizedPnl: number; blindScans: number;
+  marketWeather: string | null; verdict: string | null; headline: string | null;
+  analysis: string | null; actionable: boolean;
+  blockers: Blocker[]; notes: DayNote[];
+};
+type DailyRecord = {
+  days: TradingDay[];
+  summary: { sessions: number; tradedSessions: number; tradeRate: number | null; actionableSessions: number; openNotes: number };
+};
 type KGNode = { id: number; key: string; type: string; label: string; metadata: string };
 type KGEdge = { id: number; fromKey: string; toKey: string; relation: string; weight: number; evidenceCount: number };
 type Insights = { threshold: number; provenance: { providerCount: number; providers: string[]; outletCount: number; outlets: string[]; traceableStories: number; storiesChecked: number; sourceRoles?: { name: string; role: string; status: string; critical?: boolean; detail?: string }[] }; bands: { band: string; count: number; closed: number; winRate: number | null }[]; nearMisses: Candidate[]; confidenceTimeline: { id: number; ticker: string; scanAt: string; score: number; band: string }[]; memory: { tradeObservations: number; nonTradeObservations: number }; performance: { closedTrades: number; runningPnl: number; shadowClosed: number; shadowPnl: number; atlasEdge: number | null }; validationPolicy: { minSampleSize: number; holdoutSampleSize: number; requiresBacktest: boolean; liveConfigMutationAllowed: boolean }; readiness: { status: "NOT_READY" | "PILOT_REVIEW"; gates: { label: string; passed: boolean; value: string }[] }; journal: { id: number; title: string; detail: string }[]; experiments: unknown[]; knowledgeGraph: { nodes: KGNode[]; edges: KGEdge[] }; connectionHealth?: { connections: { name: string; role: string; status: string; critical: boolean; detail: string }[]; down: { name: string; status: string; critical: boolean; detail: string }[]; criticalDown: boolean; alerts: { id: number; at: string; name: string; fromStatus: string; toStatus: string; severity: string; detail: string }[] } };
@@ -71,6 +85,7 @@ export default function Home() {
   const [recentTransactions, setRecentTransactions] = useState<AccountTransaction[]>([]);
   const [scanning, setScanning] = useState(false);
   const [insights, setInsights] = useState<Insights | null>(null);
+  const [daily, setDaily] = useState<DailyRecord | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const prevScoreRef = useRef<number | null>(null);
   const [closedCollapsed, setClosedCollapsed] = useState(true);
@@ -101,11 +116,12 @@ export default function Home() {
     setCandidates(data.candidates);
   }
   async function refreshInsights() { setInsights(await getJson<Insights>("/api/insights")); }
+  async function refreshDaily() { setDaily(await getJson<DailyRecord>("/api/daily")); }
 
   async function refreshAll() {
     setRefreshing(true);
     try {
-      await Promise.all([refreshState(), refreshPositions(), refreshCandidates(), refreshInsights()]);
+      await Promise.all([refreshState(), refreshPositions(), refreshCandidates(), refreshInsights(), refreshDaily()]);
     } finally {
       setRefreshing(false);
     }
@@ -149,10 +165,10 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    refreshState(); refreshPositions(); refreshCandidates(); refreshInsights();
+    refreshState(); refreshPositions(); refreshCandidates(); refreshInsights(); refreshDaily();
     const stateInterval = setInterval(() => { refreshState(); refreshPositions(); }, STATE_POLL_MS);
     const candidateInterval = setInterval(refreshCandidates, CANDIDATES_POLL_MS);
-    const insightsInterval = setInterval(refreshInsights, INSIGHTS_POLL_MS);
+    const insightsInterval = setInterval(() => { refreshInsights(); refreshDaily(); }, INSIGHTS_POLL_MS);
     return () => { clearInterval(stateInterval); clearInterval(candidateInterval); clearInterval(insightsInterval); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -456,6 +472,8 @@ export default function Home() {
         <div className="source-roles">{insights?.provenance.sourceRoles?.map((source) => <article key={source.name}><b>{source.name}</b><span>{source.role}</span><em className={source.status.startsWith("LIVE") ? "live" : "off"}>{source.status}</em></article>)}</div>
       </section>
 
+      <DailyRecord record={daily} onChanged={refreshDaily} />
+
       <section className="readiness-panel" aria-labelledby="readiness-title">
         <div className="readiness-head"><div><span>LIVE-CAPITAL READINESS</span><h2 id="readiness-title">Evidence before confidence</h2><p>Historical replay can accelerate learning, but only prospective paper trades and a frozen-rule holdout can unlock a pilot review.</p></div><strong className={insights?.readiness.status === "PILOT_REVIEW" ? "ready" : "not-ready"}>{insights?.readiness.status === "PILOT_REVIEW" ? "PILOT REVIEW" : "NOT READY"}</strong></div>
         <div className="readiness-gates">{insights?.readiness.gates.map((gate) => <article key={gate.label} className={gate.passed ? "passed" : "pending"}><i>{gate.passed ? "✓" : "·"}</i><div><b>{gate.label}</b><small>{gate.value}</small></div></article>)}</div>
@@ -488,6 +506,142 @@ export default function Home() {
     </main>
   );
 }
+
+// The dated trade / no-trade record. The number that matters is not how many
+// days produced zero trades but how many of those zeros were Atlas's fault —
+// a day where nothing qualified and a day where nothing was seen look identical
+// until you separate them.
+function DailyRecord({ record, onChanged }: { record: DailyRecord | null; onChanged: () => void }) {
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [noteKind, setNoteKind] = useState("OBSERVATION");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const days = record?.days ?? [];
+  const summary = record?.summary;
+
+  async function submitNote(tradingDay: string) {
+    const body = draft.trim();
+    if (!body) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/daily", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tradingDay, body, kind: noteKind }),
+      });
+      if (!response.ok) {
+        setError(((await response.json()) as { error?: string }).error ?? "Could not save the note.");
+        return;
+      }
+      setDraft("");
+      onChanged();
+    } catch {
+      setError("Could not reach the server.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function resolveNote(id: number) {
+    await fetch("/api/daily", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "RESOLVE", id }),
+    });
+    onChanged();
+  }
+
+  return (
+    <section className="daily-panel" aria-labelledby="daily-title">
+      <div className="daily-head">
+        <div>
+          <span>DAILY RECORD</span>
+          <h2 id="daily-title">Every session, traded or not, and why</h2>
+          <p>A day with no trades because nothing qualified is the system working. A day with no trades because nothing was seen is a defect. Only the second kind is worth acting on, and it is flagged.</p>
+        </div>
+        <div className="daily-summary">
+          <article><strong>{summary ? `${summary.tradedSessions}/${summary.sessions}` : "—"}</strong><span>sessions traded</span></article>
+          <article><strong>{summary?.tradeRate == null ? "—" : `${(summary.tradeRate * 100).toFixed(0)}%`}</strong><span>trade rate</span></article>
+          <article className={summary && summary.actionableSessions > 0 ? "alert" : undefined}>
+            <strong>{summary?.actionableSessions ?? "—"}</strong><span>days worth fixing</span>
+          </article>
+        </div>
+      </div>
+
+      {days.length === 0
+        ? <p className="daily-empty">No sessions recorded yet. The first scan after deploying writes today&apos;s row.</p>
+        : <ol className="daily-list">
+            {days.map((day) => {
+              const expanded = openDay === day.tradingDay;
+              const verdict = (day.verdict ?? "").toLowerCase().replace(/_/g, "-");
+              return (
+                <li key={day.tradingDay} className={`daily-row verdict-${verdict}${day.actionable ? " actionable" : ""}`}>
+                  <button type="button" className="daily-row-head" aria-expanded={expanded}
+                    onClick={() => { setOpenDay(expanded ? null : day.tradingDay); setDraft(""); setError(null); }}>
+                    <time dateTime={day.tradingDay}>{day.tradingDay}</time>
+                    <b>{day.headline ?? "—"}</b>
+                    <span className="daily-counts">
+                      {day.isTradingDay
+                        ? `${day.positionsOpened} opened · ${day.candidatesScored} scored · ${day.scans} scans`
+                        : "closed"}
+                    </span>
+                    {day.notes.length > 0 && <em className="daily-note-count">{day.notes.length} note{day.notes.length === 1 ? "" : "s"}</em>}
+                    <i aria-hidden="true">{expanded ? "−" : "+"}</i>
+                  </button>
+
+                  {expanded && (
+                    <div className="daily-detail">
+                      <p className="daily-analysis">{day.analysis}</p>
+
+                      {day.blockers.length > 0 && (
+                        <div className="daily-blockers">
+                          <b>Where candidates stopped</b>
+                          {day.blockers.map((blocker) => (
+                            <div key={blocker.stage} className={`blocker kind-${blocker.kind}`}>
+                              <span>{blocker.label}</span><em>{blocker.count}</em>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="daily-notes">
+                        <b>Notes</b>
+                        {day.notes.length === 0 && <small>Nothing recorded for this day.</small>}
+                        {day.notes.map((note) => (
+                          <div key={note.id} className={`daily-note${note.resolved ? " resolved" : ""}`}>
+                            <span className={`note-kind kind-${note.kind.toLowerCase()}`}>{note.kind === "CHANGE_REQUEST" ? "CHANGE" : "NOTE"}</span>
+                            <p>{note.body}</p>
+                            {!note.resolved && <button type="button" onClick={() => resolveNote(note.id)}>Mark done</button>}
+                          </div>
+                        ))}
+
+                        <div className="daily-note-form">
+                          <select value={noteKind} onChange={(event) => setNoteKind(event.target.value)} aria-label="Note kind">
+                            <option value="OBSERVATION">Observation</option>
+                            <option value="CHANGE_REQUEST">Change request</option>
+                          </select>
+                          <textarea value={draft} onChange={(event) => setDraft(event.target.value)}
+                            placeholder="What did you notice, or what should change?" rows={3} maxLength={4000} />
+                          <button type="button" disabled={saving || !draft.trim()} onClick={() => submitNote(day.tradingDay)}>
+                            {saving ? "Saving…" : "Add note"}
+                          </button>
+                        </div>
+                        {error && <small className="daily-error">{error}</small>}
+                        <small className="daily-hint">Notes live in the database. Claude reads <code>NOTES.md</code> in the repo — copy anything you want acted on into its Requested changes section.</small>
+                      </div>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ol>}
+    </section>
+  );
+}
+
 
 function CandidateRow({ c }: { c: Candidate }) {
   return <article className={`candidate-row status-${c.status.toLowerCase()} ${assetClass(c.ticker)}`}>

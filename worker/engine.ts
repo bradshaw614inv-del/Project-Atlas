@@ -2,9 +2,10 @@ import { and, desc, eq, gte } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema.ts";
 import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub.ts";
-import { getMarketClock, isForceCloseTime, isMarketOpen, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours.ts";
+import { getMarketClock, isForceCloseTime, isMarketOpen, isWeekday, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours.ts";
 import { DEFAULT_MAX_OPEN_POSITIONS } from "./positions.ts";
 import { applyRealizedPnl, decideExit, evaluateEntryGuards, preflightEntryGuards } from "./decisions.ts";
+import { analyseDay, mergeStageCounts, parseStageCounts, resolveStage, type FunnelStage } from "./funnel.ts";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring.ts";
 import { getRecentSecFilings } from "./sec-edgar.ts";
 import { assessManipulationRisk } from "./manipulation.ts";
@@ -29,6 +30,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
   const [scanRun] = await db.insert(schema.scanRuns).values({ startedAt }).returning();
   let storiesFetched = 0, candidatesEvaluated = 0, positionsOpened = 0, positionsClosed = 0;
   let storiesWithBody = 0;
+  const stageCounts: Partial<Record<FunnelStage, number>> = {};
 
   try {
     const clock = getMarketClock(now);
@@ -58,6 +60,12 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         }
       }
       try { await reviewClosedTrades(db, now); } catch { /* never fails a scan */ }
+
+      // Weekends and holidays get a row too, so a gap in the record always
+      // means "nobody looked", never "the market was shut". Weekday evenings do
+      // not: the day already has, or will get, a real row from its session.
+      if (!isWeekday(clock)) await recordClosedDay(db, clock.tradingDay);
+
       await db.update(schema.scanRuns).set({ finishedAt: new Date().toISOString(), positionsClosed }).where(eq(schema.scanRuns.id, scanRun.id));
       return;
     }
@@ -283,8 +291,14 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       // it? A mention is not a catalyst for the company mentioned.
       const subject = isStorySubject(ticker, story.headline, story.summary);
 
+      // How far the security has already moved today, against the previous
+      // close. priceChangePct only measures drift since Atlas first saw the
+      // story, which is confirmation, not extension.
+      const extensionPct = quote?.dp ?? null;
+
       const scored = scoreCandidate({
         ticker, now, headline: story.headline, summary: story.summary, priceAtScan, priceChangePct,
+        extensionPct,
         minutesSincePublished, seenConfirmationEligibleLastScan, source: story.source, sourceUrl: story.url,
         independentSourceCount,
         relativeVolume: yahooAll.get(ticker)?.relativeVolume ?? null,
@@ -315,6 +329,9 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         filing.ticker === ticker && filing.eventTone === "NEGATIVE"
         && (now.getTime() - Date.parse(filing.filedAt)) / 3_600_000 <= 48);
 
+      const cryptoDisagreement = isCryptoTicker(ticker) && priceAtScan !== null
+        ? cryptoQuoteDisagreementPct(priceAtScan, freeSources.cryptoPrices.get(ticker)) : null;
+
       const result = badFiling
         ? { ...scored, score: 0, status: "DISQUALIFIED" as const,
             reason: `SEC filing ${badFiling.form} reports: ${badFiling.eventLabel}. The company disclosed this to the regulator; no entry regardless of press coverage.` }
@@ -326,13 +343,9 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         ? { ...scored, status: "CAUTION" as const, reason: `Primary-source ${story.headline} recorded for corroboration; an SEC filing alone never triggers a trade.` }
         : freeSources.haltedSymbols.has(ticker)
           ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: "Nasdaq reports this security halted or paused; no entry is permitted." }
-          : (() => {
-              const disagreement = isCryptoTicker(ticker) && priceAtScan !== null
-                ? cryptoQuoteDisagreementPct(priceAtScan, freeSources.cryptoPrices.get(ticker)) : null;
-              return disagreement !== null && disagreement > 1
-                ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: `Crypto quote conflict: independent Coinbase price differs by ${disagreement.toFixed(2)}%; no entry is permitted.` }
-                : scored;
-            })();
+          : cryptoDisagreement !== null && cryptoDisagreement > 1
+            ? { ...scored, score: 0, status: "DISQUALIFIED" as const, reason: `Crypto quote conflict: independent Coinbase price differs by ${cryptoDisagreement.toFixed(2)}%; no entry is permitted.` }
+            : scored;
 
       const [candidateRow] = await db.insert(schema.candidates).values({
         storyId: story.id,
@@ -365,14 +378,35 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
           .where(eq(schema.candidates.id, candidateRow.id));
       }
 
+      let opened = false;
+      let entryGuardBlocked = false;
       if (result.status === "WATCH" && !technicallyBlocked && priceAtScan !== null) {
-        const opened = await tryOpenPosition(db, { candidateRow, storyId: story.id, ticker, priceAtScan, account: currentAccount, weather, now, clock, criticalDown,
+        opened = await tryOpenPosition(db, { candidateRow, storyId: story.id, ticker, priceAtScan, account: currentAccount, weather, now, clock, criticalDown,
           sessionAtrPct: (yahooAll.get(ticker)?.atrPct ?? null) === null ? null : (yahooAll.get(ticker)!.atrPct! * Math.sqrt(6.5 * 12)) });
+        entryGuardBlocked = !opened;
         if (opened) {
           positionsOpened++;
           await db.update(schema.candidates).set({ observationType: "TRADE" }).where(eq(schema.candidates.id, candidateRow.id));
         }
       }
+
+      // One named stage per candidate, so "why no trades today?" is a query
+      // rather than an afternoon spent reading reason strings.
+      const stage = resolveStage({
+        hasQuote: priceAtScan !== null,
+        negativeFiling: Boolean(badFiling),
+        isSubject: subject.isSubject,
+        manipulationBlocked: manipulation.blocked,
+        filingOnly: story.finnhubCategory === "sec-filing",
+        halted: freeSources.haltedSymbols.has(ticker),
+        cryptoDisagreement: cryptoDisagreement !== null && cryptoDisagreement > 1,
+        scoreBlocker: scored.blocker,
+        chartConfirmed: technical === null ? null : technical.confirmed,
+        entryGuardBlocked,
+        opened,
+      });
+      stageCounts[stage] = (stageCounts[stage] ?? 0) + 1;
+      await db.update(schema.candidates).set({ blockedStage: stage }).where(eq(schema.candidates.id, candidateRow.id));
     }
 
     // Did this scan actually receive enough to decide anything? A source can
@@ -397,6 +431,14 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       scanAt: startedAt, ...currentYield,
       sufficient: sufficiency.sufficient ? 1 : 0,
       findings: JSON.stringify(sufficiency.findings),
+    });
+
+    await recordTradingDay(db, {
+      tradingDay: clock.tradingDay, scanAt: startedAt,
+      storiesFetched, candidatesEvaluated, positionsOpened, positionsClosed,
+      blind: sufficiency.blindToMarket ? 1 : 0,
+      marketWeather: weather.classification,
+      stageCounts,
     });
     // A new finding is worth a journal entry; a persistent one is not worth
     // repeating every five minutes.
@@ -885,6 +927,69 @@ async function manageOpenPosition(db: Db, position: typeof schema.positions.$inf
   await db.insert(schema.learningJournal).values({ kind: "ATTRIBUTION", title: `${position.ticker} ${realizedPnl > 0 ? "win" : "loss"} attribution`, detail: `Closed via ${exitReason}; return ${returnPct.toFixed(2)}%; Atlas Edge ${atlasEdge.toFixed(3)}.`, evidence: attribution });
 
   return { realizedPnl, shadow: !!position.shadow };
+}
+
+
+async function recordClosedDay(db: Db, tradingDay: string) {
+  const [existing] = await db.select().from(schema.tradingDays)
+    .where(eq(schema.tradingDays.tradingDay, tradingDay)).limit(1);
+  if (existing) return;
+  const analysis = analyseDay({
+    tradingDay, scans: 0, storiesFetched: 0, candidatesScored: 0,
+    positionsOpened: 0, positionsClosed: 0, blindScans: 0, stages: {},
+  }, false);
+  await db.insert(schema.tradingDays).values({
+    tradingDay, isTradingDay: 0,
+    verdict: analysis.verdict, headline: analysis.headline, analysis: analysis.detail,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
+
+/**
+ * Upserts the day's row and recomputes its verdict. Runs on every scan rather
+ * than once at the close, so the record is answerable mid-session and survives
+ * a worker that never gets a final invocation.
+ */
+async function recordTradingDay(db: Db, input: {
+  tradingDay: string; scanAt: string;
+  storiesFetched: number; candidatesEvaluated: number;
+  positionsOpened: number; positionsClosed: number;
+  blind: number; marketWeather: string;
+  stageCounts: Partial<Record<FunnelStage, number>>;
+}) {
+  const [existing] = await db.select().from(schema.tradingDays)
+    .where(eq(schema.tradingDays.tradingDay, input.tradingDay)).limit(1);
+
+  const stages = mergeStageCounts(parseStageCounts(existing?.stageCounts), input.stageCounts);
+  const totals = {
+    scans: (existing?.scans ?? 0) + 1,
+    storiesFetched: (existing?.storiesFetched ?? 0) + input.storiesFetched,
+    candidatesScored: (existing?.candidatesScored ?? 0) + input.candidatesEvaluated,
+    positionsOpened: (existing?.positionsOpened ?? 0) + input.positionsOpened,
+    positionsClosed: (existing?.positionsClosed ?? 0) + input.positionsClosed,
+    blindScans: (existing?.blindScans ?? 0) + input.blind,
+  };
+
+  const analysis = analyseDay({ tradingDay: input.tradingDay, ...totals, stages }, true);
+  const row = {
+    ...totals,
+    isTradingDay: 1,
+    marketWeather: input.marketWeather,
+    stageCounts: JSON.stringify(stages),
+    verdict: analysis.verdict,
+    headline: analysis.headline,
+    analysis: analysis.detail,
+    actionable: analysis.actionable ? 1 : 0,
+    lastScanAt: input.scanAt,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (existing) {
+    await db.update(schema.tradingDays).set(row).where(eq(schema.tradingDays.id, existing.id));
+  } else {
+    await db.insert(schema.tradingDays).values({ tradingDay: input.tradingDay, firstScanAt: input.scanAt, ...row });
+  }
 }
 
 async function persistRealizedPnl(db: Db, account: typeof schema.accountState.$inferSelect, realizedPnl: number) {

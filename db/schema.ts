@@ -35,6 +35,9 @@ export const candidates = sqliteTable("candidates", {
   skepticPenalty: real("skeptic_penalty").notNull().default(0),
   nearMiss: integer("near_miss").notNull().default(0),
   observationType: text("observation_type").notNull().default("NON_TRADE"),
+  // Which funnel gate stopped this candidate — see worker/funnel.ts. Machine
+  // readable so the daily record can count them without parsing prose.
+  blockedStage: text("blocked_stage"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -242,4 +245,46 @@ export const knowledgeEdges = sqliteTable("knowledge_edges", {
   weight: real("weight").notNull().default(1),
   evidenceCount: integer("evidence_count").notNull().default(1),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// One row per calendar day the market was open, whether or not Atlas traded.
+// The dashboard could previously show that today produced nothing but not
+// whether yesterday did, nor why — so a run of empty days looked identical to a
+// run of days nobody had looked at.
+export const tradingDays = sqliteTable("trading_days", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  // YYYY-MM-DD in Eastern time — the market's own calendar, not UTC.
+  tradingDay: text("trading_day").notNull().unique(),
+  isTradingDay: integer("is_trading_day").notNull().default(1),
+  scans: integer("scans").notNull().default(0),
+  storiesFetched: integer("stories_fetched").notNull().default(0),
+  candidatesScored: integer("candidates_scored").notNull().default(0),
+  positionsOpened: integer("positions_opened").notNull().default(0),
+  positionsClosed: integer("positions_closed").notNull().default(0),
+  realizedPnl: real("realized_pnl").notNull().default(0),
+  blindScans: integer("blind_scans").notNull().default(0),
+  marketWeather: text("market_weather"),
+  // JSON map of funnel stage -> count, aggregated across the day's scans.
+  stageCounts: text("stage_counts").notNull().default("{}"),
+  // Verdict and prose from analyseDay(), recomputed on every scan.
+  verdict: text("verdict"),
+  headline: text("headline"),
+  analysis: text("analysis"),
+  actionable: integer("actionable").notNull().default(0),
+  firstScanAt: text("first_scan_at"),
+  lastScanAt: text("last_scan_at"),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Free-text notes written by the operator against a trading day. Read back by
+// the dashboard and exposed through /api/daily so they can be exported into a
+// change request rather than living only in someone's memory.
+export const operatorNotes = sqliteTable("operator_notes", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  tradingDay: text("trading_day").notNull(),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  // OBSERVATION records what was seen; CHANGE_REQUEST asks for a change.
+  kind: text("kind").notNull().default("OBSERVATION"),
+  body: text("body").notNull(),
+  resolved: integer("resolved").notNull().default(0),
 });
