@@ -1,3 +1,4 @@
+import { countSubrequest } from "./subrequests.ts";
 export type FinnhubQuote = {
   c: number; // current price
   d: number | null; // change
@@ -18,6 +19,7 @@ export type FinnhubNewsItem = {
 };
 
 async function finnhubGet<T>(apiKey: string, path: string): Promise<T> {
+  countSubrequest("finnhub.io");
   const res = await fetch(`https://finnhub.io/api/v1${path}${path.includes("?") ? "&" : "?"}token=${apiKey}`);
   if (!res.ok) throw new Error(`Finnhub ${path} failed (${res.status})`);
   return (await res.json()) as T;

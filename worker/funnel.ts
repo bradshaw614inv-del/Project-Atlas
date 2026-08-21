@@ -112,6 +112,8 @@ export type DayCounts = {
   positionsClosed: number;
   /** Scans during market hours where data sufficiency said Atlas was blind. */
   blindScans: number;
+  /** Scans that exhausted the subrequest budget, so later fetches never ran. */
+  overBudgetScans?: number;
   stages: Partial<Record<FunnelStage, number>>;
 };
 
@@ -174,12 +176,14 @@ export function analyseDay(counts: DayCounts, isTradingDay = true): DayAnalysis 
   }
 
   // A day where Atlas could not see is not a day where nothing happened.
-  const starved = counts.candidatesScored === 0 || counts.blindScans > 0 || counts.storiesFetched === 0;
+  const overBudget = counts.overBudgetScans ?? 0;
+  const starved = counts.candidatesScored === 0 || counts.blindScans > 0 || counts.storiesFetched === 0 || overBudget > 0;
   if (starved) {
     const causes = [
       counts.storiesFetched === 0 ? "no stories were fetched" : null,
       counts.candidatesScored === 0 ? "nothing reached the scorer" : null,
       counts.blindScans > 0 ? `${plural(counts.blindScans, "scan")} reported insufficient data` : null,
+      overBudget > 0 ? `${plural(overBudget, "scan")} ran out of subrequest budget, so later feeds never ran` : null,
     ].filter(Boolean);
     return {
       verdict: "PIPELINE_STARVED", actionable: true, topBlockers,

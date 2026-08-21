@@ -1,6 +1,7 @@
 import { ROBINHOOD_CRYPTO_UNIVERSE, TICKER_UNIVERSE } from "./universe.ts";
 import { parseHaltRecords, type HaltRecord } from "./manipulation.ts";
 import { readTechnicals, type Bar, type TechnicalRead } from "./technicals.ts";
+import { countSubrequest } from "./subrequests.ts";
 
 // Real observed values from Yahoo's public chart API: last price, previous
 // close, and a session VWAP computed from its real 5-minute OHLCV bars.
@@ -34,6 +35,7 @@ export type FreeSourceSnapshot = {
 };
 
 const text = async (url: string, init?: RequestInit) => {
+  countSubrequest(new URL(url).hostname);
   const response = await fetch(url, { ...init, signal: AbortSignal.timeout(8000) });
   if (!response.ok) throw new Error(`${new URL(url).hostname} ${response.status}`);
   return response.text();
@@ -75,13 +77,25 @@ async function checkBls() {
 async function checkOpenFda() {
   await json("https://api.fda.gov/drug/enforcement.json?limit=1");
 }
+// One request for every asset rather than one each. Coinbase's exchange-rates
+// endpoint returns the whole table keyed by asset, quoted as units-per-USD, so
+// the price is its reciprocal. Four subrequests became one, which is four
+// percent of the entire scan budget bought back for nothing.
 async function coinbasePrices() {
+  const result = await json<{ data?: { rates?: Record<string, string> } }>(
+    "https://api.coinbase.com/v2/exchange-rates?currency=USD");
+  return ratesToPrices(result.data?.rates);
+}
+
+export function ratesToPrices(rates: Record<string, string> | undefined): Map<string, number> {
   const prices = new Map<string, number>();
-  await Promise.all(ROBINHOOD_CRYPTO_UNIVERSE.map(async ({ ticker }) => {
-    const result = await json<{ data?: { amount?: string } }>(`https://api.coinbase.com/v2/prices/${ticker}-USD/spot`);
-    const price = Number(result.data?.amount);
-    if (Number.isFinite(price) && price > 0) prices.set(ticker, price);
-  }));
+  if (!rates) return prices;
+  for (const { ticker } of ROBINHOOD_CRYPTO_UNIVERSE) {
+    const rate = Number(rates[ticker]);
+    // A rate of zero or a missing asset leaves the price absent rather than
+    // producing an infinity that would read as a real quote downstream.
+    if (Number.isFinite(rate) && rate > 0) prices.set(ticker, 1 / rate);
+  }
   return prices;
 }
 
@@ -328,14 +342,27 @@ async function pressReleaseWires() {
   return results.flatMap((result) => (result.status === "fulfilled" ? result.value : []));
 }
 
+/** Slow liveness-only probes run on one scan in six — roughly every half hour. */
+export function probeSlowSources(now: Date, everyNScans = 6): boolean {
+  return Math.floor(now.getTime() / (5 * 60 * 1000)) % everyNScans === 0;
+}
+
 export async function collectFreeSourceSnapshot(now: Date): Promise<FreeSourceSnapshot> {
   const health: FreeSourceSnapshot["health"] = {
     "Nasdaq Trading Halts": "UNAVAILABLE", "Federal Reserve": "UNAVAILABLE", BLS: "UNAVAILABLE",
     openFDA: "UNAVAILABLE", Coinbase: "UNAVAILABLE", "Yahoo Finance": "UNAVAILABLE", "Press-release wires": "UNAVAILABLE",
     "Company IR / agency releases": "LIVE", "X discovery": "DISABLED",
   };
+  // BLS and openFDA contribute nothing to any decision — they are liveness
+  // pings whose only output is a status light. Running them every scan spent
+  // two of fifty subrequests on that light; every half hour says the same
+  // thing. `probeSlowSources` decides which scans pay for them.
+  const runProbes = probeSlowSources(now);
   const [halts, fed, bls, fda, coinbase, indexes, wires] = await Promise.allSettled([
-    nasdaqHalts(), federalReserveRisk(now), checkBls(), checkOpenFda(), coinbasePrices(), yahooIndexes(), pressReleaseWires(),
+    nasdaqHalts(), federalReserveRisk(now),
+    runProbes ? checkBls() : Promise.resolve(),
+    runProbes ? checkOpenFda() : Promise.resolve(),
+    coinbasePrices(), yahooIndexes(), pressReleaseWires(),
   ]);
   if (halts.status === "fulfilled") health["Nasdaq Trading Halts"] = "LIVE";
   if (fed.status === "fulfilled") health["Federal Reserve"] = "LIVE";

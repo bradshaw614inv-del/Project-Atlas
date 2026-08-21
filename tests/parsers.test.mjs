@@ -362,3 +362,45 @@ test("an empty or malformed submission yields nothing rather than throwing", asy
   };
   assert.deepEqual(filingsFromSubmissions(broken, "AAPL", 1, since), []);
 });
+
+// --- Coinbase exchange rates ------------------------------------------------
+
+test("crypto prices are the reciprocal of Coinbase's USD rates", async () => {
+  const { ratesToPrices } = await import("../worker/free-sources.ts");
+
+  // exchange-rates quotes units-per-USD, so a rate of 0.00002 BTC per dollar
+  // is a $50,000 coin. One request replaces four per-asset spot calls.
+  const prices = ratesToPrices({ BTC: "0.00002", ETH: "0.0004", SOL: "0.01", XRP: "2" });
+
+  assert.ok(Math.abs(prices.get("BTC") - 50_000) < 1e-6);
+  assert.ok(Math.abs(prices.get("ETH") - 2_500) < 1e-6);
+  assert.ok(Math.abs(prices.get("SOL") - 100) < 1e-9);
+  assert.ok(Math.abs(prices.get("XRP") - 0.5) < 1e-12);
+});
+
+test("a missing or zero rate leaves the price absent rather than infinite", async () => {
+  const { ratesToPrices } = await import("../worker/free-sources.ts");
+
+  const prices = ratesToPrices({ BTC: "0.00002", ETH: "0", SOL: "not a number" });
+  assert.equal(prices.has("BTC"), true);
+  assert.equal(prices.has("ETH"), false, "a zero rate would divide to Infinity");
+  assert.equal(prices.has("SOL"), false);
+  assert.equal(prices.has("XRP"), false, "an asset the table omits stays absent");
+
+  assert.equal(ratesToPrices(undefined).size, 0);
+
+  // Assets outside the Robinhood allowlist are never priced, however many the
+  // table carries.
+  assert.equal(ratesToPrices({ DOGE: "0.1", BTC: "0.00002" }).has("DOGE"), false);
+});
+
+test("the liveness-only probes run on a fraction of scans", async () => {
+  const { probeSlowSources } = await import("../worker/free-sources.ts");
+
+  // Five-minute scan slots; one in six pays for BLS and openFDA.
+  const slots = Array.from({ length: 12 }, (_, i) => new Date(Date.UTC(2026, 7, 21, 14, i * 5)));
+  const probing = slots.filter((at) => probeSlowSources(at));
+
+  assert.equal(probing.length, 2, "two of twelve five-minute slots in an hour");
+  assert.equal(probeSlowSources(slots[0], 1), true, "every scan when asked for every scan");
+});

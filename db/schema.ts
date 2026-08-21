@@ -209,6 +209,8 @@ export const scanYield = sqliteTable("scan_yield", {
   filingsFound: integer("filings_found").notNull().default(0),
   newsTickersQueried: integer("news_tickers_queried").notNull().default(0),
   sufficient: integer("sufficient").notNull().default(1),
+  // Outbound requests this scan spent against the Worker's cap of fifty.
+  subrequests: integer("subrequests").notNull().default(0),
   findings: text("findings").notNull().default("[]"),
 });
 
@@ -263,6 +265,10 @@ export const tradingDays = sqliteTable("trading_days", {
   positionsClosed: integer("positions_closed").notNull().default(0),
   realizedPnl: real("realized_pnl").notNull().default(0),
   blindScans: integer("blind_scans").notNull().default(0),
+  // Scans that ran out of subrequest budget — everything after the cap fails
+  // silently, so these days saw less than they appear to have seen.
+  overBudgetScans: integer("over_budget_scans").notNull().default(0),
+  peakSubrequests: integer("peak_subrequests").notNull().default(0),
   marketWeather: text("market_weather"),
   // JSON map of funnel stage -> count, aggregated across the day's scans.
   stageCounts: text("stage_counts").notNull().default("{}"),

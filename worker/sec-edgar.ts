@@ -1,3 +1,5 @@
+import { canAfford, countSubrequest } from "./subrequests.ts";
+
 export type SecFiling = {
   ticker: string;
   accessionNumber: string;
@@ -67,6 +69,7 @@ function secHeaders(userAgent: string) {
 }
 
 async function secJson<T>(url: string, userAgent: string): Promise<T> {
+  countSubrequest("sec.gov");
   const response = await fetch(url, { headers: secHeaders(userAgent) });
   if (!response.ok) throw new Error(`SEC EDGAR request failed (${response.status})`);
   return response.json() as Promise<T>;
@@ -76,8 +79,22 @@ function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * Filings for the given tickers, newest first.
+ *
+ * One request per ticker plus one for the CIK map, so the caller decides which
+ * tickers are worth spending on. A filing never creates a candidate by itself —
+ * it corroborates a story or vetoes one — so asking about a ticker with no
+ * story this scan buys nothing and costs a subrequest out of a budget of fifty.
+ *
+ * The walk stops early rather than being cut off mid-sequence when the budget
+ * runs out, so whatever it did fetch is complete and usable.
+ */
 export async function getRecentSecFilings(userAgent: string, tickers: string[], since: Date): Promise<SecFiling[]> {
-  if (!userAgent.trim()) return [];
+  if (!userAgent.trim() || tickers.length === 0) return [];
+  // The CIK map plus at least one submission, or there is no point starting.
+  if (!canAfford(2)) return [];
+
   const tickerMap = await secJson<TickerMap>("https://www.sec.gov/files/company_tickers.json", userAgent);
   const cikByTicker = new Map(Object.values(tickerMap).map((entry) => [entry.ticker.toUpperCase(), entry.cik_str]));
   const filings: SecFiling[] = [];
@@ -85,6 +102,7 @@ export async function getRecentSecFilings(userAgent: string, tickers: string[], 
   for (const ticker of tickers) {
     const cik = cikByTicker.get(ticker.toUpperCase());
     if (!cik) continue;
+    if (!canAfford(1)) break;
     await wait(SEC_REQUEST_INTERVAL_MS);
     const paddedCik = String(cik).padStart(10, "0");
     const submission = await secJson<Submissions>(`https://data.sec.gov/submissions/CIK${paddedCik}.json`, userAgent);

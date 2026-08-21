@@ -6,6 +6,7 @@ import { getMarketClock, isForceCloseTime, isMarketOpen, isWeekday, isWithinColl
 import { DEFAULT_MAX_OPEN_POSITIONS } from "./positions.ts";
 import { applyRealizedPnl, decideExit, evaluateEntryGuards, preflightEntryGuards } from "./decisions.ts";
 import { analyseDay, mergeStageCounts, parseStageCounts, resolveStage, type FunnelStage } from "./funnel.ts";
+import { canAfford, resetSubrequests, subrequestReport } from "./subrequests.ts";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring.ts";
 import { getRecentSecFilings } from "./sec-edgar.ts";
 import { assessManipulationRisk } from "./manipulation.ts";
@@ -27,6 +28,11 @@ const MAX_CANDIDATE_TICKERS = 15;
 
 export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: string) {
   const startedAt = now.toISOString();
+  // Every outbound request this scan makes is counted against the Worker's cap
+  // of fifty. Past the cap fetches simply fail, and every caller here swallows
+  // its own errors, so the scan would report success having skipped whatever
+  // came last in the sequence.
+  resetSubrequests();
   const [scanRun] = await db.insert(schema.scanRuns).values({ startedAt }).returning();
   let storiesFetched = 0, candidatesEvaluated = 0, positionsOpened = 0, positionsClosed = 0;
   let storiesWithBody = 0;
@@ -99,7 +105,11 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     // (4 of 20 during live market hours) because Finnhub drops most of the
     // burst. Finnhub still wins where it did respond; Yahoo fills everything else.
     const universeQuotes = new Map(finnhubQuotes);
-    const yahooAll = await yahooQuotes(["SPY", "QQQ", "VIXY", ...TICKER_UNIVERSE]);
+    // The index snapshots were already fetched by collectFreeSourceSnapshot;
+    // asking Yahoo for them a second time spent three subrequests on data
+    // already in hand.
+    const yahooAll = await yahooQuotes(TICKER_UNIVERSE);
+    for (const [symbol, snapshot] of freeSources.indexes) yahooAll.set(symbol, snapshot);
     for (const [symbol, snapshot] of yahooAll) {
       if (universeQuotes.get(symbol)?.dp == null) {
         const quote = asQuote(snapshot);
@@ -158,7 +168,14 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     const newsTickers = TICKER_UNIVERSE.slice(rotation * half, rotation * half + half);
 
     const pairs: { ticker: string; story: typeof schema.newsStories.$inferSelect }[] = [];
+    let newsTickersFetched = 0;
     for (const ticker of newsTickers) {
+      // News is the most valuable thing this scan buys, so it takes priority
+      // over everything after it. If the budget is gone, stop here rather than
+      // letting the runtime fail the fetch and record a healthy-looking scan
+      // that saw nothing.
+      if (!canAfford(1)) break;
+      newsTickersFetched++;
       const items = await yahooNews(ticker).catch(() => []);
       const newestItems = [...items].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt)).slice(0, 10);
       for (const item of newestItems) {
@@ -193,8 +210,14 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     // rate-limited and never turns a filing into a bullish signal by itself.
     // A filing can only strengthen provenance when a separately sourced story
     // about the same ticker appears in the same 90-minute event window.
-    const secFilings = secUserAgent
-      ? await getRecentSecFilings(secUserAgent, TICKER_UNIVERSE, collectionStart).catch(() => [])
+    // A filing never creates a candidate on its own: it corroborates a story or
+    // vetoes one. Asking EDGAR about a ticker with no story this scan therefore
+    // buys nothing and costs one of fifty subrequests — twenty of them, which
+    // is what starved the calls that came after it in the sequence.
+    const storyTickers = Array.from(new Set(pairs.map((pair) => pair.ticker)))
+      .filter((ticker) => !isCryptoTicker(ticker));
+    const secFilings = secUserAgent && storyTickers.length > 0
+      ? await getRecentSecFilings(secUserAgent, storyTickers, collectionStart).catch(() => [])
       : [];
     for (const filing of secFilings) {
       const storyKey = `sec:${filing.accessionNumber}`;
@@ -416,7 +439,7 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       quotesUsable: yahooLive, quotesRequested: TICKER_UNIVERSE.length + 3,
       storiesFetched, storiesWithBody, candidatesScored: candidatesEvaluated,
       breadthSample: breadth.length, filingsFound: secFilings.length,
-      newsTickersQueried: newsTickers.length,
+      newsTickersQueried: newsTickersFetched,
     };
     const history = (await db.select().from(schema.scanYield)
       .orderBy(desc(schema.scanYield.id)).limit(20))
@@ -427,16 +450,20 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
         filingsFound: row.filingsFound, newsTickersQueried: row.newsTickersQueried,
       }));
     const sufficiency = assessSufficiency(currentYield, history, isMarketOpen(clock));
+    const budget = subrequestReport();
     await db.insert(schema.scanYield).values({
       scanAt: startedAt, ...currentYield,
       sufficient: sufficiency.sufficient ? 1 : 0,
       findings: JSON.stringify(sufficiency.findings),
+      subrequests: budget.total,
     });
 
     await recordTradingDay(db, {
       tradingDay: clock.tradingDay, scanAt: startedAt,
       storiesFetched, candidatesEvaluated, positionsOpened, positionsClosed,
       blind: sufficiency.blindToMarket ? 1 : 0,
+      overBudget: budget.overBudget ? 1 : 0,
+      subrequests: budget.total,
       marketWeather: weather.classification,
       stageCounts,
     });
@@ -955,7 +982,7 @@ async function recordTradingDay(db: Db, input: {
   tradingDay: string; scanAt: string;
   storiesFetched: number; candidatesEvaluated: number;
   positionsOpened: number; positionsClosed: number;
-  blind: number; marketWeather: string;
+  blind: number; overBudget: number; subrequests: number; marketWeather: string;
   stageCounts: Partial<Record<FunnelStage, number>>;
 }) {
   const [existing] = await db.select().from(schema.tradingDays)
@@ -969,6 +996,8 @@ async function recordTradingDay(db: Db, input: {
     positionsOpened: (existing?.positionsOpened ?? 0) + input.positionsOpened,
     positionsClosed: (existing?.positionsClosed ?? 0) + input.positionsClosed,
     blindScans: (existing?.blindScans ?? 0) + input.blind,
+    overBudgetScans: (existing?.overBudgetScans ?? 0) + input.overBudget,
+    peakSubrequests: Math.max(existing?.peakSubrequests ?? 0, input.subrequests),
   };
 
   const analysis = analyseDay({ tradingDay: input.tradingDay, ...totals, stages }, true);
