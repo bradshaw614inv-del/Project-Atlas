@@ -191,14 +191,14 @@ async function yahooIndexSnapshot(symbol: string): Promise<IndexSnapshot> {
 // Finnhub becomes the supplement rather than the other way round.
 export async function yahooQuotes(symbols: string[]) {
   const snapshots = new Map<string, IndexSnapshot>();
-  const chunkSize = 5;
+  const chunkSize = 12;
   for (let i = 0; i < symbols.length; i += chunkSize) {
     const results = await Promise.allSettled(symbols.slice(i, i + chunkSize).map(async (symbol) =>
       [symbol, await yahooIndexSnapshot(symbol)] as const));
     for (const result of results) {
       if (result.status === "fulfilled") snapshots.set(result.value[0], result.value[1]);
     }
-    if (i + chunkSize < symbols.length) await new Promise((resolve) => setTimeout(resolve, 120));
+    if (i + chunkSize < symbols.length) await new Promise((resolve) => setTimeout(resolve, 60));
   }
   return snapshots;
 }

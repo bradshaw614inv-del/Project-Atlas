@@ -1,4 +1,4 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema";
 import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub";
@@ -56,7 +56,11 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
           }
         }
       }
-      try { await reviewClosedTrades(db, now); } catch { /* never fails a scan */ }
+      // Learning runs here, outside market hours: these passes only analyse
+      // already-closed trades and need no live data, and the scheduled handler
+      // has a hard time limit the market-hours scan had grown past.
+      try { await reviewClosedTrades(db, now, 6); } catch { /* never fails a scan */ }
+      try { await calibrateFromHistory(db, now); } catch { /* retried next scan */ }
       await db.update(schema.scanRuns).set({ finishedAt: new Date().toISOString(), positionsClosed }).where(eq(schema.scanRuns.id, scanRun.id));
       return;
     }
@@ -148,16 +152,32 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
     const rotation = Math.floor(now.getTime() / (5 * 60 * 1000)) % 2;
     const newsTickers = TICKER_UNIVERSE.slice(rotation * half, rotation * half + half);
 
+    const knowledgeFacts = new Set<string>();
     const pairs: { ticker: string; story: typeof schema.newsStories.$inferSelect }[] = [];
-    for (const ticker of newsTickers) {
-      const items = await yahooNews(ticker).catch(() => []);
+    // News was fetched one ticker at a time. Ten sequential RSS round trips is
+    // most of a scan's wall clock on its own, and the scheduled handler has a
+    // hard limit the scan had grown past — every cron scan was being killed
+    // mid-run while a manual one still completed. These are independent
+    // requests, so they go out together.
+    const newsResults = await Promise.all(newsTickers.map(async (ticker) =>
+      [ticker, await yahooNews(ticker).catch(() => [])] as const));
+
+    // One lookup for every story id in this batch instead of one per story.
+    const allIds = newsResults.flatMap(([, items]) => items.map((item) => item.id));
+    const knownStories = new Map<string, typeof schema.newsStories.$inferSelect>();
+    for (let i = 0; i < allIds.length; i += 80) {
+      const rows = await db.select().from(schema.newsStories)
+        .where(inArray(schema.newsStories.finnhubId, allIds.slice(i, i + 80)));
+      for (const row of rows) knownStories.set(row.finnhubId, row);
+    }
+
+    for (const [ticker, items] of newsResults) {
       const newestItems = [...items].sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt)).slice(0, 10);
       for (const item of newestItems) {
         const publishedAt = new Date(item.publishedAt);
         const ageMinutes = (now.getTime() - publishedAt.getTime()) / 60000;
 
-        const existing = await db.select().from(schema.newsStories).where(eq(schema.newsStories.finnhubId, item.id)).limit(1);
-        let story = existing[0];
+        let story = knownStories.get(item.id);
         if (!story) {
           const [inserted] = await db.insert(schema.newsStories).values({
             finnhubId: item.id,
@@ -171,8 +191,9 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
             firstSeenAt: startedAt,
           }).returning();
           story = inserted;
+          knownStories.set(item.id, inserted);
           storiesFetched++;
-          if ((item.summary ?? '').length > 60) storiesWithBody++;
+          if ((item.summary ?? "").length > 60) storiesWithBody++;
         }
         // Keep real historical observations for research, but only let news
         // observed within the action window enter live scoring.
@@ -352,7 +373,10 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       }).returning();
       candidatesEvaluated++;
 
-      await rememberKnowledge(db, ticker, weather.classification, result.signals.find((s) => s.key === "catalyst")?.evidence ?? "Unknown catalyst");
+      // Collected in memory and written once at the end of the scan. Doing
+      // this per candidate meant roughly five database round trips each, and
+      // the same handful of distinct facts were rewritten dozens of times.
+      knowledgeFacts.add(`${ticker}\u0000${weather.classification}\u0000${result.signals.find((s) => s.key === "catalyst")?.evidence ?? "Unknown catalyst"}`);
 
       // A qualifying score still does not trade unless the chart agrees.
       // Recorded as CAUTION with the chart's own reason, so the observation is
@@ -372,6 +396,11 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
           await db.update(schema.candidates).set({ observationType: "TRADE" }).where(eq(schema.candidates.id, candidateRow.id));
         }
       }
+    }
+
+    for (const fact of knowledgeFacts) {
+      const [factTicker, factRegime, factCatalyst] = fact.split("\u0000");
+      await rememberKnowledge(db, factTicker, factRegime, factCatalyst);
     }
 
     // Did this scan actually receive enough to decide anything? A source can
@@ -457,8 +486,11 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
 
     // Calibration reads Atlas's own accumulated observations; it must never
     // be able to fail a scan, and it never mutates live scoring config.
-    try { await reviewClosedTrades(db, now); } catch { /* never fails a scan */ }
-    try { await calibrateFromHistory(db, now); } catch { /* logged next scan */ }
+    // Learning passes are deliberately not run during market hours. They only
+    // analyse already-closed trades, need no live data, and the scheduled
+    // handler has a hard time limit that the scan had grown past — every cron
+    // scan was being killed mid-run while a manual one still completed.
+    // They run in the out-of-window branch instead.
 
     await db.update(schema.scanRuns).set({
       finishedAt: new Date().toISOString(),
