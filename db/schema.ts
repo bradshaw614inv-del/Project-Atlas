@@ -294,3 +294,28 @@ export const operatorNotes = sqliteTable("operator_notes", {
   body: text("body").notNull(),
   resolved: integer("resolved").notNull().default(0),
 });
+
+// Candidates Atlas rejected, followed forward through the stop they would have
+// been given. This is the only honest way to ask whether the gates are too
+// tight: a gate whose rejections keep winning is measuring the wrong thing, and
+// one whose rejections keep losing is earning its place.
+export const missedOpportunities = sqliteTable("missed_opportunities", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  candidateId: integer("candidate_id").notNull().references(() => candidates.id),
+  tradingDay: text("trading_day").notNull(),
+  ticker: text("ticker").notNull(),
+  blockedAt: text("blocked_at").notNull(),
+  blockedStage: text("blocked_stage").notNull(),
+  score: real("score").notNull().default(0),
+  // The price the position would have been entered at, and the stop distance
+  // volatility targeting would have given it.
+  referencePrice: real("reference_price").notNull(),
+  stopDistancePct: real("stop_distance_pct").notNull(),
+  // Filled in by a later scan from bars already fetched for other purposes.
+  resolved: integer("resolved").notNull().default(0),
+  wouldHaveWon: integer("would_have_won"),
+  mfePct: real("mfe_pct"),
+  maePct: real("mae_pct"),
+  decidedAfterMinutes: integer("decided_after_minutes"),
+  resolvedAt: text("resolved_at"),
+});

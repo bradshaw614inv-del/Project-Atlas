@@ -53,8 +53,37 @@ below, or say "check the dashboard notes" and export them from `/api/daily`.
   "already up 8%, no chasing" guard was measuring the move since Atlas first
   saw the story, not the move on the day, so a stock already up 12% read as
   unmoved if Atlas first looked at the top.
+- **2026-08-21** — Counted the scan's subrequests. The plan was ~72 against a
+  cap of 50, so whatever ran last was silently skipped. Now ~45, counted at
+  runtime, and recorded per scan.
+- **2026-08-21** — Added missed-opportunity tracking. Every rejection scoring 40+
+  is replayed forward through the stop it would have been given. See the
+  "What the gates cost" panel.
 
 ---
+
+## How to read the gate-cost panel
+
+This is the one that answers "are we missing good trades?". It follows every
+rejection forward and asks whether it reached one stop-distance in favour before
+one against — the same question the position itself would have faced.
+
+- A gate whose rejections **win more than half the time** is measuring the wrong
+  thing and is costing trades. Flagged in amber.
+- A gate whose rejections **lose more than half the time** is earning its place.
+  A run of empty days behind it is the system working.
+- Under 20 resolved rejections it says **"not yet answerable"** and gives no
+  verdict. That is deliberate: a win rate off five samples is not evidence, and
+  the point of the panel is to make gate changes evidence-led.
+
+Two deliberate conservatisms, so the panel cannot talk us into a bad change:
+a bar that touches both the target and the stop counts as a **loss** (OHLC does
+not say which came first), and a session that reached neither counts as
+**nothing** rather than as a loss.
+
+**When a gate crosses the line, tell me and I will dig into what it actually
+measures.** I will not loosen one on the strength of the percentage alone —
+the number says where to look, not what to change.
 
 ## How to read the daily record
 

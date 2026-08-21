@@ -1,8 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "../../../db/index.ts";
-import { operatorNotes, tradingDays } from "../../../db/schema.ts";
+import { missedOpportunities, operatorNotes, tradingDays } from "../../../db/schema.ts";
 import { STAGE_LABELS, parseStageCounts, type FunnelStage } from "../../../worker/funnel.ts";
 import { isNoteRequestError, parseNoteRequest } from "../../../worker/note-requests.ts";
+import { summariseGateCost } from "../../../worker/missed.ts";
 
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 180;
@@ -18,6 +19,9 @@ export async function GET(request: Request) {
   const db = getDb();
   const days = await db.select().from(tradingDays).orderBy(desc(tradingDays.tradingDay)).limit(limit);
   const notes = await db.select().from(operatorNotes).orderBy(desc(operatorNotes.id)).limit(200);
+  // Every rejection Atlas followed forward, so each gate can be judged on what
+  // it actually turned down rather than on how reasonable it sounds.
+  const misses = await db.select().from(missedOpportunities).orderBy(desc(missedOpportunities.id)).limit(2000);
 
   const shaped = days.map((day) => {
     const stages = parseStageCounts(day.stageCounts);
@@ -44,8 +48,15 @@ export async function GET(request: Request) {
   const sessions = shaped.filter((day) => day.isTradingDay);
   const traded = sessions.filter((day) => day.positionsOpened > 0).length;
 
+  const gateCost = summariseGateCost(misses.map((miss) => ({
+    blockedStage: miss.blockedStage,
+    resolved: Boolean(miss.resolved),
+    wouldHaveWon: miss.wouldHaveWon === null ? null : Boolean(miss.wouldHaveWon),
+  })));
+
   return Response.json({
     days: shaped,
+    gateCost,
     summary: {
       sessions: sessions.length,
       tradedSessions: traded,
@@ -54,6 +65,8 @@ export async function GET(request: Request) {
       // number worth acting on; the raw count of empty days is not.
       actionableSessions: sessions.filter((day) => day.actionable).length,
       openNotes: notes.filter((note) => !note.resolved).length,
+      missesTracked: misses.length,
+      missesResolved: misses.filter((miss) => miss.resolved).length,
     },
   });
 }

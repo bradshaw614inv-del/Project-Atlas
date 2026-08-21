@@ -664,3 +664,41 @@ footer { position: relative; z-index: 1; border-top: 1px solid color-mix(in srgb
 .daily-error { color: var(--danger); }
 .daily-hint { grid-column: 1 / -1; }
 .daily-hint code { background: var(--surface-2); padding: 1px 4px; border-radius: 2px; }
+
+/* What the gates cost — rejected candidates replayed against their own stop. */
+.gate-panel { display: grid; gap: 16px; }
+.gate-head { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; align-items: flex-start; }
+.gate-head > div:first-child { flex: 1 1 24rem; }
+.gate-head span { font: 800 9px var(--font-geist-mono, monospace); color: var(--accent); letter-spacing: .12em; }
+.gate-head h2 { margin: 4px 0 6px; }
+.gate-head p { color: var(--subtle); max-width: 62ch; margin: 0; }
+
+.gate-summary { display: flex; gap: 8px; flex-wrap: wrap; }
+.gate-summary article {
+  background: var(--surface-2); border: 1px solid var(--accent-soft); border-radius: 4px;
+  padding: 10px 14px; display: grid; gap: 2px; min-width: 7rem;
+}
+.gate-summary strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.gate-summary span { font: 700 9px var(--font-geist-mono, monospace); color: var(--faint); letter-spacing: .08em; text-transform: uppercase; }
+.gate-summary article.alert strong { color: var(--warning); }
+
+.gate-empty { color: var(--subtle); }
+.gate-list { display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); }
+.gate-row {
+  background: var(--card); border: 1px solid var(--accent-soft);
+  border-left: 3px solid var(--subtle); border-radius: 4px; padding: 11px 13px; display: grid; gap: 6px;
+}
+.gate-row.costly { border-left-color: var(--warning); }
+.gate-row.inconclusive { opacity: .7; border-left-color: var(--faint); }
+.gate-row-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+.gate-row-head b { font-weight: 600; }
+.gate-rate { font: 700 15px var(--font-geist-mono, monospace); font-variant-numeric: tabular-nums; }
+.gate-row.costly .gate-rate { color: var(--warning); }
+
+/* Fill is the share of rejections that would have won; the tick marks breakeven. */
+.gate-bar { position: relative; height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; }
+.gate-bar span { display: block; height: 100%; background: var(--subtle); }
+.gate-row.costly .gate-bar span { background: var(--warning); }
+.gate-bar i { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--accent-text); opacity: .55; }
+.gate-row small { color: var(--faint); font: 400 11px var(--font-geist-mono, monospace); }
+.gate-row p { margin: 0; color: var(--subtle); font-size: 13px; }

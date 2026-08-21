@@ -3,10 +3,11 @@ import type { DrizzleD1Database } from "drizzle-orm/d1";
 import * as schema from "../db/schema.ts";
 import { getCompanyNews, getCryptoNews, getQuote, getQuotesThrottled, type FinnhubQuote } from "./finnhub.ts";
 import { getMarketClock, isForceCloseTime, isMarketOpen, isWeekday, isWithinCollectionWindow, isWithinEntryWindow, type MarketClock } from "./market-hours.ts";
-import { DEFAULT_MAX_OPEN_POSITIONS } from "./positions.ts";
+import { DEFAULT_MAX_OPEN_POSITIONS, executionPrice, stopDistancePctFor } from "./positions.ts";
 import { applyRealizedPnl, decideExit, evaluateEntryGuards, preflightEntryGuards } from "./decisions.ts";
 import { analyseDay, mergeStageCounts, parseStageCounts, resolveStage, type FunnelStage } from "./funnel.ts";
 import { canAfford, resetSubrequests, subrequestReport } from "./subrequests.ts";
+import { evaluateMiss, shouldTrackMiss } from "./missed.ts";
 import { classifyMarketWeather, CONFIRMATION_ELIGIBILITY_THRESHOLD, scoreCandidate, TRADE_THRESHOLD } from "./scoring.ts";
 import { getRecentSecFilings } from "./sec-edgar.ts";
 import { assessManipulationRisk } from "./manipulation.ts";
@@ -430,7 +431,29 @@ export async function runScan(db: Db, apiKey: string, now: Date, secUserAgent?: 
       });
       stageCounts[stage] = (stageCounts[stage] ?? 0) + 1;
       await db.update(schema.candidates).set({ blockedStage: stage }).where(eq(schema.candidates.id, candidateRow.id));
+
+      // Follow the ones we turned down. Whether a gate is too tight is not
+      // answerable from the trades we took, only from what the rejected ones
+      // went on to do.
+      if (!opened && priceAtScan !== null && shouldTrackMiss(stage, result.score, true)) {
+        const atrPct = yahooAll.get(ticker)?.atrPct ?? null;
+        const sessionAtrPct = atrPct === null ? null : atrPct * Math.sqrt(6.5 * 12);
+        await db.insert(schema.missedOpportunities).values({
+          candidateId: candidateRow.id,
+          tradingDay: clock.tradingDay,
+          ticker,
+          blockedAt: startedAt,
+          blockedStage: stage,
+          score: result.score,
+          referencePrice: executionPrice(priceAtScan, "BUY", isCryptoTicker(ticker)),
+          stopDistancePct: stopDistancePctFor(sessionAtrPct),
+        });
+      }
     }
+
+    // Resolve today's outstanding misses from charts this scan already fetched
+    // for other reasons, so following them costs no subrequests at all.
+    await resolveMissedOpportunities(db, clock.tradingDay, yahooAll, now);
 
     // Did this scan actually receive enough to decide anything? A source can
     // respond perfectly and deliver nothing; that failure is silent and is
@@ -954,6 +977,47 @@ async function manageOpenPosition(db: Db, position: typeof schema.positions.$inf
   await db.insert(schema.learningJournal).values({ kind: "ATTRIBUTION", title: `${position.ticker} ${realizedPnl > 0 ? "win" : "loss"} attribution`, detail: `Closed via ${exitReason}; return ${returnPct.toFixed(2)}%; Atlas Edge ${atlasEdge.toFixed(3)}.`, evidence: attribution });
 
   return { realizedPnl, shadow: !!position.shadow };
+}
+
+
+/**
+ * Fills in the outcome of rejected candidates using bars already in hand.
+ *
+ * Only today's misses, and only tickers whose chart this scan happened to
+ * fetch — a miss nobody has bars for simply stays unresolved rather than being
+ * scored as a loss, which would quietly argue that every gate is working.
+ */
+async function resolveMissedOpportunities(
+  db: Db, tradingDay: string,
+  snapshots: Map<string, { bars: { t: number; high: number; low: number; close: number }[] }>,
+  now: Date,
+) {
+  const outstanding = await db.select().from(schema.missedOpportunities).where(and(
+    eq(schema.missedOpportunities.tradingDay, tradingDay),
+    eq(schema.missedOpportunities.resolved, 0),
+  ));
+
+  for (const miss of outstanding) {
+    const bars = snapshots.get(miss.ticker)?.bars;
+    if (!bars || bars.length === 0) continue;
+
+    const outcome = evaluateMiss({
+      referencePrice: miss.referencePrice,
+      stopDistancePct: miss.stopDistancePct,
+      blockedAtMs: Date.parse(miss.blockedAt),
+      bars,
+    });
+    if (!outcome.resolved) continue;
+
+    await db.update(schema.missedOpportunities).set({
+      resolved: 1,
+      wouldHaveWon: outcome.wouldHaveWon ? 1 : 0,
+      mfePct: outcome.mfePct,
+      maePct: outcome.maePct,
+      decidedAfterMinutes: outcome.decidedAfterMinutes,
+      resolvedAt: now.toISOString(),
+    }).where(eq(schema.missedOpportunities.id, miss.id));
+  }
 }
 
 

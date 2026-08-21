@@ -47,9 +47,19 @@ type TradingDay = {
   analysis: string | null; actionable: boolean;
   blockers: Blocker[]; notes: DayNote[];
 };
+type GateCost = {
+  stage: string; label: string; kind: string;
+  blocked: number; resolved: number; wouldHaveWon: number;
+  winRate: number | null; conclusive: boolean; verdict: string;
+};
 type DailyRecord = {
   days: TradingDay[];
-  summary: { sessions: number; tradedSessions: number; tradeRate: number | null; actionableSessions: number; openNotes: number };
+  gateCost: GateCost[];
+  summary: {
+    sessions: number; tradedSessions: number; tradeRate: number | null;
+    actionableSessions: number; openNotes: number;
+    missesTracked: number; missesResolved: number;
+  };
 };
 type KGNode = { id: number; key: string; type: string; label: string; metadata: string };
 type KGEdge = { id: number; fromKey: string; toKey: string; relation: string; weight: number; evidenceCount: number };
@@ -474,6 +484,8 @@ export default function Home() {
 
       <DailyRecord record={daily} onChanged={refreshDaily} />
 
+      <GateCostPanel record={daily} />
+
       <section className="readiness-panel" aria-labelledby="readiness-title">
         <div className="readiness-head"><div><span>LIVE-CAPITAL READINESS</span><h2 id="readiness-title">Evidence before confidence</h2><p>Historical replay can accelerate learning, but only prospective paper trades and a frozen-rule holdout can unlock a pilot review.</p></div><strong className={insights?.readiness.status === "PILOT_REVIEW" ? "ready" : "not-ready"}>{insights?.readiness.status === "PILOT_REVIEW" ? "PILOT REVIEW" : "NOT READY"}</strong></div>
         <div className="readiness-gates">{insights?.readiness.gates.map((gate) => <article key={gate.label} className={gate.passed ? "passed" : "pending"}><i>{gate.passed ? "✓" : "·"}</i><div><b>{gate.label}</b><small>{gate.value}</small></div></article>)}</div>
@@ -638,6 +650,62 @@ function DailyRecord({ record, onChanged }: { record: DailyRecord | null; onChan
               );
             })}
           </ol>}
+    </section>
+  );
+}
+
+
+// What the gates actually cost. Each rejected candidate above a plausibility
+// floor is replayed forward through the stop it would have been given, and
+// asked the only question that matters: did it reach one stop-distance in
+// favour before one against? A gate whose rejections keep winning is measuring
+// the wrong thing. A gate whose rejections keep losing is earning its place.
+function GateCostPanel({ record }: { record: DailyRecord | null }) {
+  const rows = record?.gateCost ?? [];
+  const summary = record?.summary;
+  const costly = rows.filter((row) => row.conclusive && (row.winRate ?? 0) > 0.5);
+
+  return (
+    <section className="gate-panel" aria-labelledby="gate-title">
+      <div className="gate-head">
+        <div>
+          <span>WHAT THE GATES COST</span>
+          <h2 id="gate-title">The trades Atlas turned down, replayed</h2>
+          <p>
+            Whether a gate is too tight cannot be read off the trades we took. Every rejection above a
+            plausibility floor is followed forward through the stop it would have been given. A bar that
+            spans both levels counts as a loss, and an unfinished session counts as nothing.
+          </p>
+        </div>
+        <div className="gate-summary">
+          <article><strong>{summary?.missesTracked ?? "—"}</strong><span>rejections followed</span></article>
+          <article><strong>{summary?.missesResolved ?? "—"}</strong><span>resolved</span></article>
+          <article className={costly.length > 0 ? "alert" : undefined}>
+            <strong>{costly.length}</strong><span>gates costing trades</span>
+          </article>
+        </div>
+      </div>
+
+      {rows.length === 0
+        ? <p className="gate-empty">No rejections followed yet. Every blocked candidate scoring 40 or better starts being tracked on the next scan.</p>
+        : <div className="gate-list">
+            {rows.map((row) => (
+              <article key={row.stage} className={`gate-row kind-${row.kind}${row.conclusive && (row.winRate ?? 0) > 0.5 ? " costly" : ""}${row.conclusive ? "" : " inconclusive"}`}>
+                <div className="gate-row-head">
+                  <b>{row.label}</b>
+                  <span className="gate-rate">
+                    {row.winRate === null ? "—" : `${(row.winRate * 100).toFixed(0)}%`}
+                  </span>
+                </div>
+                <div className="gate-bar" role="presentation">
+                  <span style={{ width: `${(row.winRate ?? 0) * 100}%` }} />
+                  <i style={{ left: "50%" }} />
+                </div>
+                <small>{row.wouldHaveWon}/{row.resolved} resolved · {row.blocked} followed</small>
+                <p>{row.verdict}</p>
+              </article>
+            ))}
+          </div>}
     </section>
   );
 }

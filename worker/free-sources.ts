@@ -19,7 +19,14 @@ export type IndexSnapshot = {
   // Chart read from today's real bars — buyers-in-control evidence, so a story
   // can be checked against what price is actually doing before acting on it.
   technicals: TechnicalRead;
+  // Today's session bars with their timestamps. Carried because the chart is
+  // already fetched for every universe ticker on every scan: reading forward
+  // prices out of it costs nothing, where fetching them again would cost a
+  // subrequest per ticker out of a budget of fifty.
+  bars: TimedBar[];
 };
+
+export type TimedBar = { t: number; high: number; low: number; close: number };
 
 export type PressRelease = { source: string; title: string; url: string; publishedAt: string; tickers: string[] };
 
@@ -201,12 +208,14 @@ export function snapshotFromChart(data: YahooChart, symbol: string): IndexSnapsh
   // Today's bars only: the chart read must describe this session, not a
   // five-day blur.
   const todayBars: Bar[] = [];
+  const timedBars: TimedBar[] = [];
   for (let i = 0; i < (bars?.close?.length ?? 0); i++) {
     const [high, low, close, volume] = [bars?.high?.[i], bars?.low?.[i], bars?.close?.[i], bars?.volume?.[i]].map(barValue);
     const stamp = stamps[i];
     if ([high, low, close].some((value) => value === null) || !Number.isFinite(stamp)) continue;
     if (dayFormat.format(new Date(stamp * 1000)) !== latestDay) continue;
     todayBars.push({ high: high!, low: low!, close: close!, volume: volume ?? 0 });
+    timedBars.push({ t: stamp, high: high!, low: low!, close: close! });
   }
   const sessionVwap = totalVolume > 0 ? valueVolume / totalVolume : null;
 
@@ -218,6 +227,7 @@ export function snapshotFromChart(data: YahooChart, symbol: string): IndexSnapsh
     relativeVolume: baseline > 0 && todayVolume > 0 ? todayVolume / baseline : null,
     atrPct,
     technicals: readTechnicals(todayBars, sessionVwap),
+    bars: timedBars,
   };
 }
 
